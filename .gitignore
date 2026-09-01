@@ -1,0 +1,30 @@
+# ---------- build output ----------
+node_modules/
+# Packaged exes: ~125MB each and GitHub HARD-BLOCKS any file over 100MB, so these can never be
+# committed. Ship them as GitHub Releases (which allow up to 2GB per file) instead.
+release/
+
+# ---------- audio masters ----------
+# The uncompressed WAV masters are 644MB — 13x the size of the whole rest of the repo — and the
+# game never loads them: tools/scan-music.py converts them to the .ogg files that actually ship.
+# Keep them locally (and backed up elsewhere); the repo carries only what runs.
+**/_ARCHIVE/_WAV/
+
+# ---------- local machine state ----------
+# Claude Code's per-machine permission grants and absolute paths. Nothing secret, but it is
+# local state that would conflict on every other machine.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# ---------- transient tuning state ----------
+# The live tuning stores are EMPTIED by every bake (their values move into src/), so a committed
+# copy is either empty or a half-finished session someone else would inherit. The baked values
+# in src/ are the real record.
+tuning/_backup/
+tuning/*.bak
+
+# ---------- os / editor noise ----------
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp

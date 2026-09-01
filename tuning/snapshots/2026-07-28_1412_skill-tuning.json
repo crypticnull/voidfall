@@ -1,0 +1,14 @@
+{
+  "flamethrower": {
+    "cooldown": 3.8,
+    "damage": 4,
+    "damagePerLevel": 1.5,
+    "range": 409.5,
+    "coneDeg": 25,
+    "duration": 2,
+    "tickInterval": 0.1,
+    "burnDamage": 5,
+    "burnDamagePerLevel": 1.4,
+    "burnDuration": 3
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "duskfall-survivors",
+  "version": "0.4.1",
+  "private": true,
+  "description": "Duskfall Survivors — a dark-fantasy arena survival roguelike",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.duskfallsurvivors.game",
+    "productName": "Duskfall Survivors",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "style.css",
+      "src/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "!assets/music/**/_ARCHIVE/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "DuskfallSurvivors_Alpha_${version}.exe"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

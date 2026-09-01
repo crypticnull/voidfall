@@ -1,0 +1,2693 @@
+/* Fonts are self-hosted from assets/fonts (see tools/fetch-fonts.py). They are pulled in by a
+   <link> in index.html rather than @import-ed here: an @import cannot start downloading until
+   this stylesheet itself has arrived, which serialises the two requests. A link tag fetches
+   both in parallel. */
+
+:root {
+  --void: #070504;
+  /* Charcoal, not brown. Promoted from the main-menu trial to the whole game. */
+  --panel-hi: #26262a;
+  --panel-lo: #151517;
+  --iron: #3f3f47;
+  --iron-lit: #5b5b66;
+  /* The chrome red: thin keylines, corner squares, idle button text. */
+  --chrome: #c9382e;
+  /* The lit red, deepened to match the idle-button red — preferred over the old #d15a4d. */
+  --chrome-lit: #ad4136;
+  --chrome-dim: #8a2118;
+  /* Idle (deselected) button label. Kept as its own token so the idle state can be tuned
+     without disturbing every other red, even though it now resolves to the same value — this
+     shade was chosen here first and then adopted as --chrome-lit.
+     On the button's own #151517 fill it measures 3.11:1, the darkest step still clearing 3:1
+     for large text; #a83d33, one step down, lands at 2.94 and fails. */
+  --btn-idle: var(--chrome-lit);
+  /* Height of the XP strip along the top. Anything anchored under it reads this, so the
+     two can never drift apart at a breakpoint. */
+  --xp-h: 18px;
+  --gold: #a8842f;
+  /* Cold plate blue — the armour bar. A token rather than a hex buried in one rule, so the
+     next thing that wants it has somewhere to point. */
+  --steel: #7f93ab;
+  /* The 4px checker every panel is filled with. Hoisted into a token the moment a second
+     kind of thing (the life bar) wanted it, so the texture has exactly one definition.
+     Two layers, offset half a tile — the size/position lists below MUST stay two entries
+     long to match, or CSS silently cycles them and the checker turns into stripes. */
+  --dither: linear-gradient(45deg, rgba(0,0,0,0.16) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.16) 75%, rgba(0,0,0,0.16)),
+    linear-gradient(45deg, rgba(0,0,0,0.16) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.16) 75%, rgba(0,0,0,0.16));
+  --gold-bright: #c9a227;
+  --blood: #7a1f1a;
+  --blood-bright: #a13328;
+  --bone: #c9bfa8;
+  --bone-dim: #8a7d68;
+  /* Space a scrolling panel must leave around its contents so focus strokes are not clipped.
+     The widest ring in this sheet is the primary button's: a 2px stroke at 3px offset — 5px.
+     6px, not 5, because the exact figure leaves the stroke sitting ON the clip boundary, and
+     the whole UI is scaled with CSS zoom: at a fractional scale a flush edge rounds either way
+     and the stroke loses its outer row. The spare pixel is what makes it survive rounding. */
+  --focus-ring-room: 6px;
+  /* ...and the primary button also RISES on hover/focus, so its ring needs this much more room
+     above than to the sides. Missing it left the top 2px of the stroke tucked under the
+     container edge while the sides looked fine — which is what makes this worth its own token
+     rather than a fatter number: the asymmetry is real, not a fudge factor. */
+  --focus-lift: 2px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; overflow: hidden; background: var(--void); font-family: 'Pixelify Sans', sans-serif; }
+/* width/height are explicit, not left to `inset: 0`. A canvas is a REPLACED element, so with
+   width:auto it lays out at its intrinsic (backing-store) size and ignores the inset stretch —
+   which was invisible while the backing store always matched the window, and would have made
+   every Resolution below Native render into a small box in the corner instead of upscaling to
+   fill the screen. */
+#game { display: block; position: fixed; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+
+/* ---- UI Scale ----------------------------------------------------------------------------
+   One property, applied to the roots of every DOM layer that sits over the canvas. `zoom` (not
+   a transform) on purpose: it scales layout and hit-testing together, so buttons stay
+   clickable where they look, and each root keeps its own viewport anchoring instead of being
+   dragged around by a scaled parent. The canvas is deliberately NOT in this list — how big the
+   world draws is Resolution's job, not this one. */
+#hud, .overlay, #toastContainer, .nowPlaying, #stageCard {
+  zoom: var(--ui-scale, 1);
+}
+
+.hidden { display: none !important; }
+
+/* ---------- Atmosphere overlays ---------- */
+#vignette {
+  position: fixed; inset: 0; z-index: 4; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 53%, rgba(4,2,1,0.72) 100%);
+}
+#grain {
+  position: fixed; inset: 0; z-index: 30; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* ---------- Shared grime texture ---------- */
+.overlayInner, .classCard, .levelCard, .settingRow, .settingOption, .toast, .topBar, .bossBarWrap .bar, .gemIcon {
+  background-color: var(--panel-hi);
+  background-image:
+    repeating-linear-gradient(115deg, rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 1px, transparent 1px, transparent 3px),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.25));
+}
+
+/* ---------- Boot loading screen ----------
+   Sits above everything until the art has settled. The backdrop is the Underworld floor tile
+   repeated — the same surface the main menu stands on, so the loading screen and the menu it
+   hands over to read as one place rather than two. */
+#loadScreen {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background-color: #0a0710;
+  background-image: url('assets/tiles/stage3_floor.png');
+  background-repeat: repeat;
+  /* 4x, matching FLOOR_TILE_SCALE in main.js, so the tile reads at the size it does in game
+     rather than as fine noise. */
+  background-size: 256px 256px;
+  image-rendering: pixelated;
+  transition: opacity 0.45s ease;
+}
+/* Darkened toward the edges so the title lockup has something to sit on. */
+#loadScreen::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 45%, rgba(10,7,16,0.15) 0%, rgba(6,4,10,0.82) 70%, rgba(4,2,6,0.95) 100%);
+}
+#loadScreen.done { opacity: 0; pointer-events: none; }
+.loadInner { position: relative; z-index: 1; text-align: center; width: 94%; max-width: 720px; }
+/* The baked lockup. Sized like .titleCanvas on the menu so the handover from loading screen to
+   main menu does not move or resize the title. */
+#loadTitleImg {
+  width: 100%; max-width: 600px; height: auto; margin: 0 auto; display: block;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,0.55));
+}
+/* Progress bar pinned across the very bottom of the screen. Full-bleed rather than boxed: at
+   boot there is no panel yet for it to belong to. Sits under the lockup so the title is what
+   the eye lands on first and the bar is what it drops to — the reverse of the two competing
+   for the top of the frame. */
+#loadBarTrack {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 6px;
+  background: rgba(0,0,0,0.55); z-index: 2;
+  /* Inset on the TOP edge now — it is the side the bar is lit from once it sits on the floor
+     of the screen rather than hanging from the ceiling. */
+  box-shadow: inset 0 1px 0 rgba(0,0,0,0.6);
+}
+#loadBarFill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--blood), var(--blood-bright));
+  box-shadow: 0 0 10px rgba(161,51,40,0.55);
+  transition: width 0.2s ease;
+}
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; color: var(--bone); }
+/* Large XP bar across the very top */
+.xpTop {
+  position: absolute; top: 0; left: 0; right: 0; height: var(--xp-h);
+  background: #0e0a06; border-bottom: 1px solid var(--iron);
+  box-shadow: inset 0 -3px 6px rgba(0,0,0,0.6); overflow: hidden;
+}
+.xpTopFill {
+  height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--gold), var(--gold-bright));
+  box-shadow: 0 0 10px rgba(201,162,39,0.5); transition: width 0.15s ease;
+}
+/* The level label sits centred on the XP bar, which means it crosses TWO backdrops as the bar
+   fills: the gold fill on the left, the dark track on the right. --chrome-dim is the red the
+   gold buttons use (3.76:1 on gold) but collapses to 2.17:1 on the track; --chrome is the
+   reverse (2.12 / 3.84). --chrome-lit was picked as the one that never falls apart on either
+   (2.42 / 3.37), and the black text-shadow — replacing the old white one, which was there to
+   lift dark type off gold — carries it the rest of the way on both. */
+.xpTopLabel {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  font-family: 'Cinzel', serif; font-size: 12px; font-weight: 700; color: var(--chrome-lit);
+  line-height: 18px; text-shadow: 0 1px 0 rgba(0,0,0,0.55); letter-spacing: 0.08em;
+}
+/* Corner panels */
+.hudPanel {
+  position: absolute; top: 28px;
+  background: var(--panel-lo); border: 1px solid var(--iron); border-radius: 3px;
+  padding: 8px 12px; box-shadow: inset 0 0 0 1px rgba(201,162,39,0.12), 0 3px 10px rgba(0,0,0,0.6);
+}
+.hudVitals {
+  /* Flush into the corner: no offset, and the two corner radii squared off so it meets the
+     screen edges cleanly instead of leaving lit slivers of background showing through. */
+  top: 0; left: 0; width: 220px;
+  border-top-left-radius: 0; border-top-width: 0; border-left-width: 0;
+}
+.hudRunTotals { left: 14px; text-align: left; min-width: 96px; }
+.hudPanelTitle { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--bone-dim); display: flex; justify-content: space-between; }
+/* Label sits UNDER its bar, so the gap belongs above it rather than below. */
+.hudVitals .hudPanelTitle { margin-top: 4px; }
+.hudPanelVal { color: var(--bone); font-family: 'Cinzel', serif; }
+.hudVitals .bar { height: 13px; }
+.hudStage { font-family: 'Cinzel', serif; font-size: 11px; color: var(--bone-dim); margin-top: 5px; letter-spacing: 0.04em; }
+.hudGoldRow { font-family: 'Cinzel', serif; font-size: 44px; font-weight: 700; color: var(--gold-bright); text-shadow: 0 0 10px rgba(201,162,39,0.35); line-height: 1; }
+.goldGlyph { color: var(--gold); }
+.hudGoldLabel { font-size: 20px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--bone-dim); margin-top: 3px; }
+.hudCenter { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); text-align: center; }
+/* Gold, and now the bottom line of the centre stack — it reads as the run's tally alongside
+   the gold counter rather than as the headline it used to be. margin-top because it follows
+   the kill count now instead of leading. */
+/* The run clock reads white, not gold. Gold is the currency colour — it sits directly under the
+   gold counter in the HUD, and two golds stacked read as one readout in two halves. */
+.hudTime { font-family: 'Cinzel', serif; font-size: 26px; font-weight: 700; color: #f2f0ec; text-shadow: 0 2px 4px rgba(0,0,0,0.7); line-height: 1; margin-top: 4px; }
+/* The siege clock, while a stage portal stands. Red and beating — the SAME red the pressured
+   enemies glow with (--chrome, and the rgb literal in drawPressureAura), so the screen reads as
+   one escalating warning rather than two unrelated ones.
+   The period is set from JS on .style.animationDuration, because it has to accelerate with the
+   pressure; the keyframes themselves stay fixed. */
+.hudTimePressure {
+  color: var(--chrome);
+  text-shadow: 0 0 10px rgba(201,56,46,0.75), 0 2px 4px rgba(0,0,0,0.8);
+  animation: siegePulse 1.1s ease-in-out infinite;
+}
+@keyframes siegePulse {
+  0%, 100% { opacity: 0.72; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.12); }
+}
+.hudKills { font-family: 'Cinzel', serif; font-size: 14px; color: var(--blood-bright); margin-top: 3px; letter-spacing: 0.05em; }
+/* Key counter shares the run-totals panel (upper-left), sitting to the RIGHT of the gold count. */
+.hudRunTotalsRow { display: flex; align-items: center; justify-content: flex-start; gap: 14px; }
+.hudKeyGroup { display: flex; align-items: center; gap: 5px; }
+.hudKeyGroup .keyIcon { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7)); }
+.hudKeyGroup #keyCountText { font-family: 'Pixelify Sans', sans-serif; font-size: 22px; font-weight: 700;
+  color: #d3d8e2; text-shadow: 0 2px 4px rgba(0,0,0,0.7); line-height: 1; }
+.barLabel { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--bone-dim); }
+.bar { position: relative; height: 12px; border-radius: 2px; background: #0e0a06; overflow: hidden; border: 1px solid var(--iron); box-shadow: inset 0 2px 3px rgba(0,0,0,0.6); }
+.barFill { height: 100%; transition: width 0.15s ease; }
+/* The player's life bar does NOT ease. A smoothly sliding bar hides the one thing that matters
+   in the moment you are hit — HOW MUCH that hit took — because the motion reads as one
+   continuous drain no matter whether it was a scratch or half your health. The fill snaps to
+   the new value instantly and the amount lost is shown instead: a white block left standing in
+   the gap the damage opened, which vanishes without fading. Each instance of damage is its own
+   block, so two hits in quick succession read as two events rather than one long slide. */
+.hpBar .barFill { transition: none; }
+.barLoss {
+  position: absolute; top: 0; height: 100%;
+  background: #ffffff;
+  box-shadow: 0 0 6px rgba(255,255,255,0.55);
+  pointer-events: none;
+  opacity: 0;
+}
+/* Held at full strength for the whole life of the flash, then gone on the same frame — an
+   opacity fade would reintroduce exactly the soft motion this replaces. */
+.barLoss.show { opacity: 1; }
+.hpBar .barFill { background: linear-gradient(90deg, var(--blood), var(--blood-bright)); box-shadow: 0 0 8px rgba(161,51,40,0.5); }
+.xpBar .barFill { background: linear-gradient(90deg, var(--gold), var(--gold-bright)); box-shadow: 0 0 8px rgba(201,162,39,0.4); }
+.statChips { display: flex; gap: 8px; }
+.chip {
+  background: var(--panel-lo); border: 1px solid var(--iron); border-radius: 3px; padding: 6px 12px;
+  font-family: 'Cinzel', serif; font-size: 13px; color: var(--bone);
+  box-shadow: inset 0 0 0 1px rgba(201,162,39,0.12);
+}
+.goldChip { color: var(--gold-bright); border-color: var(--gold); }
+
+/* ---------- Gold + Upgrade Shop ---------- */
+.goldBanner {
+  font-family: 'Cinzel', serif; font-size: 18px; font-weight: 700; color: var(--gold-bright);
+  margin: 4px 0 18px; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(201,162,39,0.3);
+}
+.shopGold {
+  font-family: 'Cinzel', serif; font-size: 18px; font-weight: 700; color: var(--gold-bright);
+  margin-bottom: 16px; text-shadow: 0 0 10px rgba(201,162,39,0.3);
+}
+.shopList { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; text-align: left; }
+.shopRow {
+  display: flex; align-items: center; gap: 14px; padding: 12px 16px;
+  border: 1px solid var(--iron); border-radius: 3px; background: var(--panel-lo);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4);
+}
+.shopInfo { flex: 1; }
+.shopName { font-family: 'Cinzel', serif; font-weight: 700; font-size: 15px; color: var(--bone); }
+.shopDesc { font-size: 12px; color: var(--bone-dim); margin: 2px 0 6px; }
+.shopPips { display: flex; gap: 4px; }
+.pip { width: 14px; height: 6px; border-radius: 2px; background: var(--panel-hi); border: 1px solid var(--iron); }
+.pip.filled { background: var(--gold-bright); border-color: var(--gold-bright); box-shadow: 0 0 6px rgba(201,162,39,0.5); }
+.shopBuyBtn {
+  min-width: 92px; padding: 10px 14px; border: 2px solid var(--gold); border-radius: 3px;
+  background: var(--panel-hi); color: var(--gold-bright); font-family: 'Cinzel', serif; font-size: 14px;
+  font-weight: 700; cursor: pointer; transition: border-color 0.15s, transform 0.15s;
+}
+.shopBuyBtn:hover, .shopBuyBtn.gpFocused { transform: translateY(-2px); border-color: var(--gold-bright); }
+.shopBuyBtn.unaffordable { color: var(--bone-dim); border-color: var(--iron); opacity: 0.7; }
+.shopBuyBtn.maxed { color: var(--bone-dim); border-color: var(--iron); cursor: default; opacity: 0.6; }
+
+.bossBarWrap { position: absolute; top: 112px; left: 50%; transform: translateX(-50%); width: 480px; max-width: 80vw; }
+.bossBarLabel {
+  text-align: center; font-family: 'Cinzel', serif; color: var(--blood-bright); font-size: 13px; margin-bottom: 3px;
+  text-shadow: 0 0 6px rgba(161,51,40,0.7); letter-spacing: 0.04em;
+}
+.bossBarLabel::before { content: '\2756  '; opacity: 0.6; }
+.bossBarLabel::after { content: '  \2756'; opacity: 0.6; }
+.bossBarBg { height: 14px; border-radius: 2px; border: 1px solid var(--iron); }
+.bossFill { background: linear-gradient(90deg, #4a1410, var(--blood-bright)); }
+
+.trayWrap { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.tray { display: flex; gap: 8px; }
+.gemIcon {
+  position: relative; width: 46px; height: 46px; border-radius: 3px;
+  border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center;
+  font-family: 'Cinzel', serif; font-weight: 700; color: var(--accent); overflow: hidden;
+  box-shadow: inset 0 0 6px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(201,162,39,0.2), 0 2px 4px rgba(0,0,0,0.5);
+}
+.gemIcon svg { width: 68%; height: 68%; display: block; }
+.gemIcon small { position: absolute; bottom: 1px; right: 3px; font-size: 9px; color: var(--bone); font-family: 'Pixelify Sans'; text-shadow: 0 0 3px #000, 0 1px 1px #000; z-index: 1; }
+.gemCd { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); }
+.traySmall .gemIconSmall {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--panel-lo);
+  border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--accent); font-family: 'Cinzel', serif; font-weight: 700;
+  box-shadow: inset 0 0 5px rgba(0,0,0,0.7);
+}
+.traySmall { display: flex; gap: 6px; }
+.controlsHint { position: absolute; bottom: 78px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--bone-dim); letter-spacing: 0.04em; }
+.gamepadStatus {
+  position: fixed; top: 14px; right: 14px; z-index: 20; font-size: 11px; font-family: 'Courier New', monospace;
+  padding: 8px 12px; border-radius: 3px; background: rgba(7,5,4,0.88); border: 1px solid var(--iron);
+  color: var(--bone-dim); pointer-events: none; white-space: pre; line-height: 1.5; max-width: 320px;
+  box-shadow: inset 0 0 0 1px rgba(201,162,39,0.1);
+}
+.gamepadStatus.connected { color: #7a9463; border-color: #4a5c34; }
+
+/* ---------- Overlays ---------- */
+/* One scrim for every overlay, whether what is behind it is the menu carousel or a live arena.
+   It used to be 0.94/0.98, which blacked the backdrop out completely — opening Unlocks from the
+   main menu looked like the scene had been thrown away rather than like a panel opening in
+   front of it. Pitched one step darker than #mainMenu.mainMenuSplit's own 0.42/0.72: the same
+   scene, pushed a little further back, so the panel reads as the thing being looked at. Keep
+   the two in that relationship if either is retuned. */
+.overlay {
+  position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(20,12,8,0.52), rgba(3,2,1,0.80));
+}
+.overlayInner {
+  /* Widescreen philosophy — panels get room to breathe so rows (e.g. class select) fit
+     without paging. */
+  max-width: 1280px; width: 94%; text-align: center; padding: 28px 24px;
+  /* Never let a tall panel (e.g. Settings with Dev Mode on) overflow off-screen on short
+     windows — cap to the viewport and scroll inside so every control stays reachable. */
+  /* Capped to the viewport so a tall panel never runs off-screen. It does NOT scroll itself
+     — see "The frame is a container" below; the designated body absorbs the overflow. */
+  max-height: 90vh; overflow-x: hidden;
+  border: 1px solid var(--iron); border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.5), inset 0 0 40px rgba(0,0,0,0.5), 0 10px 40px rgba(0,0,0,0.7);
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52' viewBox='0 0 52 52'><g transform='rotate(0 26 26)'><path d='M5 30 Q5 5 30 5' stroke='%23c9a227' stroke-width='1.5' fill='none' opacity='0.55'/><path d='M5 30 Q10 15 21 13' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.4'/><circle cx='5' cy='30' r='2' fill='%23c9a227' opacity='0.65'/><circle cx='30' cy='5' r='2' fill='%23c9a227' opacity='0.65'/><path d='M21 13 q4 -2 2 -7' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.45'/></g></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52' viewBox='0 0 52 52'><g transform='rotate(90 26 26)'><path d='M5 30 Q5 5 30 5' stroke='%23c9a227' stroke-width='1.5' fill='none' opacity='0.55'/><path d='M5 30 Q10 15 21 13' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.4'/><circle cx='5' cy='30' r='2' fill='%23c9a227' opacity='0.65'/><circle cx='30' cy='5' r='2' fill='%23c9a227' opacity='0.65'/><path d='M21 13 q4 -2 2 -7' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.45'/></g></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52' viewBox='0 0 52 52'><g transform='rotate(180 26 26)'><path d='M5 30 Q5 5 30 5' stroke='%23c9a227' stroke-width='1.5' fill='none' opacity='0.55'/><path d='M5 30 Q10 15 21 13' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.4'/><circle cx='5' cy='30' r='2' fill='%23c9a227' opacity='0.65'/><circle cx='30' cy='5' r='2' fill='%23c9a227' opacity='0.65'/><path d='M21 13 q4 -2 2 -7' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.45'/></g></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52' viewBox='0 0 52 52'><g transform='rotate(270 26 26)'><path d='M5 30 Q5 5 30 5' stroke='%23c9a227' stroke-width='1.5' fill='none' opacity='0.55'/><path d='M5 30 Q10 15 21 13' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.4'/><circle cx='5' cy='30' r='2' fill='%23c9a227' opacity='0.65'/><circle cx='30' cy='5' r='2' fill='%23c9a227' opacity='0.65'/><path d='M21 13 q4 -2 2 -7' stroke='%23c9a227' stroke-width='1' fill='none' opacity='0.45'/></g></svg>"),
+    repeating-linear-gradient(115deg, rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 1px, transparent 1px, transparent 3px),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.25));
+  background-position: top left, top right, bottom right, bottom left, 0 0, 0 0;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, repeat, no-repeat;
+  background-size: 52px 52px, 52px 52px, 52px 52px, 52px 52px, auto, auto;
+}
+.titleFlourish {
+  width: 240px; height: 16px; margin: -4px auto 20px; opacity: 0.8;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='16'><line x1='0' y1='8' x2='102' y2='8' stroke='%23a8842f' stroke-width='1'/><line x1='138' y1='8' x2='240' y2='8' stroke='%23a8842f' stroke-width='1'/><path d='M120 1 L127 8 L120 15 L113 8 Z' fill='%23c9a227'/><circle cx='110' cy='8' r='1.6' fill='%23a8842f'/><circle cx='130' cy='8' r='1.6' fill='%23a8842f'/></svg>");
+  background-repeat: no-repeat; background-position: center;
+}
+.gameTitle {
+  font-family: 'Pirata One', 'Cinzel', serif; font-size: 64px; letter-spacing: 0.08em; color: var(--gold-bright);
+  margin: 0 0 6px; text-shadow: 0 2px 0 #000, 0 0 30px rgba(201,162,39,0.3);
+}
+
+/* Hand-crafted illuminated title (main menu) */
+.titleArt { width: 100%; display: flex; justify-content: center; margin: -6px 0 14px; }
+.titleCanvas { width: 100%; max-width: 600px; height: auto; display: block; image-rendering: pixelated;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,0.55)); }
+/* The SVG carries its own ornate frame, so let the main-menu panel recede behind it. */
+#mainMenu .overlayInner { max-width: 720px; border-color: transparent; box-shadow: inset 0 0 40px rgba(0,0,0,0.5), 0 10px 40px rgba(0,0,0,0.7); }
+.sectionTitle { font-family: 'Cinzel', serif; font-weight: 700; font-size: 30px; color: var(--gold-bright); margin: 0 0 4px; text-shadow: 0 2px 0 #000; }
+/* Subheads run red across every screen: the end-screen line, each menu's tagline and the
+   confirm-dialog message all share this class. */
+.gameSubtitle { color: var(--chrome-lit); margin: 0 0 28px; font-size: 15px; }
+
+/* Class select is a horizontal row of portrait cards, scrollable as a carousel when the
+   roster outgrows the panel. */
+.classCarousel { display: flex; align-items: center; gap: 10px; }
+.classViewport { flex: 1; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+.classViewport::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.classList { display: flex; gap: 18px; align-items: stretch; }
+.classCard { flex: 0 0 278px; } /* +20% — four fit across a widescreen panel */
+.carouselArrow {
+  flex: 0 0 auto; width: 46px; height: 92px; cursor: pointer;
+  background: var(--panel-lo); border: 2px solid var(--iron); color: var(--gold-bright);
+  font-family: 'Pixelify Sans', sans-serif; font-size: 34px; line-height: 1;
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.4), inset -2px -2px 0 rgba(0,0,0,0.55);
+}
+.carouselArrow:hover:not(:disabled), .carouselArrow.gpFocused { border-color: var(--gold-bright); }
+.carouselArrow:disabled { opacity: 0.3; cursor: default; }
+
+/* Character portrait framed at the top of each card. */
+.classPortrait {
+  background: #0e0b07; border: 2px solid var(--iron); margin-bottom: 12px;
+  display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
+  box-shadow: inset 0 0 22px rgba(0,0,0,0.75);
+}
+.classPortraitCanvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.classCard {
+  border: 1px solid var(--iron); border-radius: 3px; padding: 18px;
+  color: var(--bone); text-align: left; cursor: pointer; transition: transform 0.15s, border-color 0.15s;
+  font-family: inherit; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5);
+}
+.classCard:hover, .classCard.gpFocused { transform: translateY(-4px); border-color: var(--accent); }
+.classCardHeader { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.classDot { width: 16px; height: 16px; border-radius: 50%; box-shadow: 0 0 10px currentColor, inset 0 0 4px rgba(0,0,0,0.5); flex-shrink: 0; }
+.classCardName { font-family: 'Cinzel', serif; font-weight: 700; font-size: 19px; }
+.classCardTag { font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
+.classCardDesc { font-size: 13px; color: var(--bone-dim); line-height: 1.5; margin-bottom: 12px; min-height: 40px; }
+.classCardStats { display: flex; gap: 10px; font-size: 12px; color: var(--bone); margin-bottom: 10px; flex-wrap: wrap; }
+.classCardSkill { font-size: 12px; color: var(--bone-dim); border-top: 1px solid var(--iron); padding-top: 8px; }
+
+.cardList { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.levelCard {
+  border: 2px solid var(--accent); border-radius: 3px; padding: 20px 16px;
+  color: var(--bone); cursor: pointer; text-align: left; transition: transform 0.15s; font-family: inherit;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), 0 0 18px -6px var(--accent);
+}
+.levelCard:hover, .levelCard.gpFocused { transform: translateY(-4px) scale(1.02); }
+.levelCardSubtitle { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 6px; }
+.levelCardTitle { font-family: 'Cinzel', serif; font-weight: 700; font-size: 20px; margin-bottom: 8px; }
+.levelCardDesc { font-size: 13px; color: var(--bone-dim); line-height: 1.45; }
+.rerollBtn { display: block; margin: 20px auto 0; letter-spacing: 0.04em; }
+.rerollBtn:disabled { opacity: 0.4; cursor: default; color: var(--bone-dim); border-color: var(--iron); }
+.rerollBtn:disabled:hover { color: var(--bone-dim); border-color: var(--iron); }
+
+.endStats { display: flex; justify-content: center; gap: 28px; margin-bottom: 26px; }
+.endStats div { display: flex; flex-direction: column; gap: 4px; }
+.endStats span { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bone-dim); }
+.endStats b { font-family: 'Cinzel', serif; font-weight: 700; font-size: 24px; color: var(--chrome-lit); }
+
+/* The killing blow: a single banded sentence under the stat row, in the blood palette so it
+   reads as the wound rather than as another score. Its own band because it is prose, not a
+   number to line up against the four beside it. */
+.endKillingBlow {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  margin: 0 auto 24px; padding: 12px 22px; max-width: 92%;
+  border-top: 1px solid var(--iron); border-bottom: 1px solid var(--iron);
+  background: linear-gradient(180deg, rgba(122,31,26,0.16), rgba(0,0,0,0));
+}
+.endBlowLabel { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bone-dim); }
+.endBlowText {
+  /* The pixel face, matching the HUD and the stage cards — the death sentence is game text,
+     not chrome. */
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700;
+  font-size: 21px; color: var(--blood-bright); text-align: center;
+}
+/* The item shelf sits directly under the relic strip, same rows, slightly dimmer border so the
+   two lists read as neighbours rather than one long list. */
+.itemBar { margin-top: 12px; opacity: 0.96; }
+/* The stage card wearing an item splash keeps its layout; only the title colour changes, set
+   inline per item. */
+.stageCard.itemSplash .stageCardTitle { text-shadow: 3px 3px 0 #000, 0 0 30px rgba(122,86,210,0.4); }
+.endBlowDmg { font-size: 13px; color: var(--bone-dim); letter-spacing: 0.04em; }
+
+.primaryBtn {
+  background: linear-gradient(180deg, var(--gold-bright), #7a611f); border: 1px solid #5c4a1a; border-radius: 3px; padding: 14px 36px;
+  font-family: 'Cinzel', serif; font-size: 16px; font-weight: 700; color: #1a1207; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -2px 4px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.5); transition: transform 0.15s;
+}
+.primaryBtn:hover, .primaryBtn.gpFocused { transform: translateY(-2px); }
+
+.ghostBtn {
+  background: var(--panel-lo); border: 1px solid var(--iron); border-radius: 3px; padding: 10px 22px;
+  font-family: 'Cinzel', serif; font-size: 13px; cursor: pointer; margin-top: 18px; transition: border-color 0.15s, color 0.15s;
+}
+.ghostBtn:hover, .ghostBtn.gpFocused { border-color: var(--gold-bright); color: var(--gold-bright); }
+
+.gpFocused { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+
+.inputHint { color: var(--bone-dim); font-size: 12px; margin: -18px 0 22px; }
+.inputHint .xbBtn { margin: 0 2px; }
+
+/* stretch, not center: every button in the row takes the height of the tallest, so a gold
+   primary sitting beside ghost buttons whose labels wrap to two lines is not left visibly
+   shorter than them. It was 66px against their 76-80px, which read as the important button
+   being the small one — and meant the red hover outline merely brought it level with its
+   neighbours instead of lifting it above them. */
+.pauseActions { display: flex; gap: 14px; justify-content: center; align-items: stretch; }
+.pauseActions .ghostBtn { margin-top: 0; }
+.pauseControls { color: var(--bone-dim); font-size: 12px; margin: 20px 0 0; letter-spacing: 0.03em; }
+.pauseControls .xbBtn { margin: 0 2px; }
+
+/* ---------- Main menu ---------- */
+#mainMenu { background: rgba(3,2,1,0.42); }
+.buildTag {
+  position: absolute; right: 16px; bottom: 12px;
+  font-family: 'Cinzel', serif; font-size: 12px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--gold-bright); opacity: 0.55;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8); pointer-events: none; user-select: none;
+}
+.mainMenuActions { display: flex; flex-direction: column; gap: 14px; align-items: stretch; max-width: 320px; margin: 0 auto; }
+.mainMenuActions .primaryBtn, .mainMenuActions .ghostBtn { width: 100%; margin-top: 0; }
+
+/* ---------- Leaderboard ---------- */
+.leaderboardList { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; margin-bottom: 20px; text-align: left; }
+.leaderboardRow {
+  display: grid; grid-template-columns: 28px 56px 1fr auto auto auto; gap: 14px; align-items: center;
+  border: 1px solid var(--iron); border-radius: 3px; padding: 10px 14px;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4);
+}
+.leaderboardRow.victory { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), inset 0 0 14px rgba(201,162,39,0.12); }
+.leaderboardRank { font-family: 'Cinzel', serif; font-weight: 700; color: var(--gold-bright); text-align: center; }
+.leaderboardClass { font-family: 'Cinzel', serif; font-size: 13px; color: var(--bone); }
+.leaderboardClass small { display: block; color: var(--bone-dim); font-family: 'Pixelify Sans'; font-size: 10px; font-weight: 400; }
+.leaderboardStat { font-size: 12px; color: var(--bone-dim); text-align: right; white-space: nowrap; }
+.leaderboardStat b { display: block; color: var(--bone); font-family: 'Cinzel', serif; font-size: 14px; }
+.leaderboardEmpty { color: var(--bone-dim); font-size: 13px; padding: 20px 0; text-align: center; }
+/* Pause-screen stat readouts: player modifiers, then enemy modifiers below. */
+.statPanels { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; text-align: left; }
+.statPanel { border: 2px solid var(--iron); padding: 12px 16px;
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.3), inset -2px -2px 0 rgba(0,0,0,0.5); }
+.statPanelTitle { font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 20px;
+  color: var(--gold-bright); margin-bottom: 8px; letter-spacing: 0.04em; }
+.statGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 4px 18px; }
+.statLine { display: flex; justify-content: space-between; gap: 10px;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 17px; }
+.statLine .k { color: var(--bone-dim); }
+.statLine .v { color: var(--bone); font-weight: 700; font-variant-numeric: tabular-nums; }
+.statLine .v.up { color: #7fc46a; }   /* better than baseline */
+.statLine .v.down { color: #d0503f; } /* worse than baseline */
+
+/* Skill Modifiers panel: one block per active gem, so its DPS line and its upgrade line
+   never get split across grid columns. */
+.statPanelNote { font-size: 14px; color: var(--bone-dim); font-weight: 400;
+  letter-spacing: 0; margin-left: 8px; }
+#skillStats { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 18px; }
+.skillBlock { border-left: 3px solid var(--iron); padding: 3px 0 3px 10px;
+  background: rgba(0,0,0,0.22); }
+.skillBlockTop { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 17px; }
+.skillBlockName { color: var(--bone); font-weight: 700; }
+.skillBlockLv { color: var(--bone-dim); font-weight: 400; font-size: 14px; margin-left: 7px; }
+.skillBlockDps { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dpsVal { color: var(--gold-bright); font-weight: 700; }
+.dpsUnit { color: var(--bone-dim); font-size: 14px; }
+.dpsTgt { color: #7fc46a; font-size: 14px; margin-left: 4px; }
+.dpsCtl { color: #8fd0e8; font-size: 15px; }
+.skillBlockMods { font-family: 'Pixelify Sans', sans-serif; font-size: 14px;
+  color: var(--bone-dim); margin-top: 1px; }
+.skillTotal { grid-column: 1 / -1; display: flex; justify-content: space-between;
+  border-top: 2px solid var(--iron); margin-top: 4px; padding-top: 6px;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 17px; font-weight: 700;
+  color: var(--bone); font-variant-numeric: tabular-nums; }
+
+.perfBox {
+  position: static; pointer-events: none; align-self: stretch;
+  background: var(--panel-lo); border: 2px solid var(--iron); padding: 8px 12px; min-width: 132px;
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.35), inset -2px -2px 0 rgba(0,0,0,0.55);
+}
+.perfRow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.perfLabel {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 13px;
+  letter-spacing: 0.08em; color: var(--bone-dim);
+}
+.perfVal {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 20px;
+  color: var(--bone); line-height: 1.25; font-variant-numeric: tabular-nums;
+}
+.perfVal.warn { color: #e0a94a; }
+.perfVal.bad  { color: #d0503f; }
+
+/* Frame phase breakdown, appended to the perf box while the profiler is on. Two columns so the
+   millisecond figures line up under each other — the whole point is scanning down for the one
+   row that is bigger than the rest. */
+.perfBreak {
+  display: grid; grid-template-columns: 1fr auto; gap: 0 8px;
+  margin-top: 5px; padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.perfBreak span { color: var(--bone-dim); }
+.perfBreak b { color: var(--bone); font-variant-numeric: tabular-nums; font-weight: 400; }
+.perfBreak hr {
+  grid-column: 1 / -1; height: 0; margin: 3px 0;
+  border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Podium trophies (gold / silver / bronze) in the rank column of the top three runs. */
+.podiumTrophy { width: 26px; height: 30px; display: block; margin: 0 auto; image-rendering: pixelated;
+  filter: drop-shadow(0 2px 0 rgba(0,0,0,0.7)); }
+/* Completing a run is a separate badge from placing on the podium. */
+.victoryMark { color: var(--gold-bright); margin-left: 4px; text-shadow: 0 0 8px rgba(201,162,39,0.6); }
+
+/* Small character portrait beside each run's name. */
+.leaderboardFace {
+  width: 56px; height: 60px; background: #0e0b07; border: 2px solid var(--iron);
+  display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
+  box-shadow: inset 0 0 12px rgba(0,0,0,0.8);
+}
+.leaderboardFaceCanvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+
+/* ---------- Settings ---------- */
+.settingsList { display: flex; flex-direction: column; gap: 22px; margin-bottom: 8px; text-align: left; }
+.settingRow { border: 1px solid var(--iron); border-radius: 3px; padding: 16px 18px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4); }
+.settingLabel { font-family: 'Cinzel', serif; font-weight: 700; font-size: 16px; color: var(--bone); margin-bottom: 2px; }
+.settingLabelDesc { font-size: 12px; color: var(--bone-dim); margin-bottom: 12px; }
+.settingOptions { display: flex; gap: 10px; flex-wrap: wrap; }
+.settingOption {
+  flex: 1; min-width: 150px; border: 2px solid var(--iron); border-radius: 3px;
+  padding: 10px 12px; color: var(--bone); text-align: left; cursor: pointer; font-family: inherit; transition: border-color 0.15s;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4);
+}
+.settingOption:hover, .settingOption.gpFocused { border-color: var(--gold); }
+.settingOption.active { border-color: var(--gold-bright); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), inset 0 0 16px rgba(201,162,39,0.15); }
+.settingOptionLabel { font-size: 13px; font-weight: 600; margin-bottom: 3px; color: var(--bone); }
+.settingOptionDesc { font-size: 11px; color: var(--bone-dim); line-height: 1.4; }
+
+.volumeControl { display: flex; align-items: center; gap: 14px; border: 2px solid transparent; border-radius: 3px; padding: 4px 6px; margin: -4px -6px; transition: border-color 0.15s; }
+.volumeControl.gpFocused { border-color: var(--gold); }
+.volumeValue { font-family: 'Cinzel', serif; font-size: 13px; color: var(--gold-bright); min-width: 40px; text-align: right; }
+.volumeSlider {
+  flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+  background: var(--iron); outline: none; cursor: pointer;
+}
+.volumeSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--gold-bright); border: 2px solid var(--panel-lo); box-shadow: 0 0 6px rgba(201,162,39,0.5);
+  cursor: pointer;
+}
+.volumeSlider::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%; background: var(--gold-bright);
+  border: 2px solid var(--panel-lo); box-shadow: 0 0 6px rgba(201,162,39,0.5); cursor: pointer;
+}
+.volumeSlider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--iron); }
+
+/* ---------- Xbox button glyphs ---------- */
+.xbBtn {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 50%; font-size: 11px; font-weight: 700; color: #fff; vertical-align: middle; line-height: 1;
+  box-shadow: inset 0 0 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.6);
+}
+.xbBtn.btnA { background: #3f6b2e; }
+.xbBtn.btnB { background: var(--blood-bright); }
+.xbBtn.btnX { background: #3d5f74; }
+.xbBtn.btnY { background: var(--gold); color: #1a1207; }
+.xbBtn.btnPill { border-radius: 3px; min-width: auto; height: auto; padding: 2px 7px; background: #2a2016; font-size: 10px; letter-spacing: 0.03em; border: 1px solid var(--iron); }
+
+/* ---------- Toasts ---------- */
+/* Bottom-RIGHT, sharing the corner with the Now Playing flash (which lifts above the stack
+   when one is present — see --toast-h). align-items keeps the cards flush to the right edge
+   regardless of how wide each one ends up. */
+#toastContainer { position: fixed; bottom: 20px; right: 20px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+.toast {
+  position: relative;
+  /* Spine on the RIGHT, hard against the screen edge the stack is anchored to, with the type
+     ranged to the same edge. Both lines now end where the spine begins, so the card reads
+     inward from the corner instead of fighting it. */
+  border-right: 3px solid var(--accent); border-radius: 2px; padding: 10px 14px; text-align: right;
+  /* Rises into place rather than sliding in from the side: the stack is anchored to the
+     bottom edge, so drifting up out of it reads as the card arriving from where it lives.
+     translateY, not a margin or a bottom offset — a transform costs no layout, so a toast
+     appearing never shoves the ones already on screen. */
+  color: var(--bone); min-width: 220px; opacity: 0; transform: translateY(22px); transition: opacity 0.3s ease, transform 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+/* The corner filigree that used to live here is gone: on a flat red card with the type ranged
+   right, a lone quarter-arc in the opposite corner read as a stray mark rather than as trim. */
+.toast.show { opacity: 1; transform: translateY(0); }
+/* Pixel face, matching the rest of the in-run chrome (vitals, damage numbers, boss tag).
+   No font-size here on purpose: the global !important bumps further down this file already
+   set toasts to 23/21px, so anything declared at this point would be dead weight.
+
+   Both lines off-black on the red fill, the subtitle a touch lighter so the two still
+   separate. Measured: off-black is 3.96:1, comfortably past the 3:1 bar for bold text this
+   size. The gold now appears only as the chevrons and the spine, framing the type rather than
+   competing with it. Both bold. */
+/* The title row is a flex line with the chevrons pinned to the left and the label ranged
+   right, so they sit on one baseline directly across from each other however long the label
+   is. baseline (not center) alignment because the two are different sizes. */
+.toastTitle {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; color: var(--void);
+  display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+}
+.toastTitle::before {
+  content: '>>>';
+  color: var(--gold-bright);
+  letter-spacing: 1px;
+  /* Immune to the global 23px !important bump that sizes the title text, which would have
+     made the chevrons as loud as the label they point at. */
+  font-size: 18px !important;
+  /* Baseline alignment is metrically correct but does not LOOK level: the chevrons are the
+     smaller face, so their ink sits lower in the line than the label's capitals. Measured in
+     Pixelify Sans rather than guessed — '>>>' at 18px inks -2..13px around the baseline, the
+     label's caps ink 0..15px, so lifting by exactly 2 makes the two bands coincide. transform,
+     so it costs no layout in the flex row. */
+  transform: translateY(-2px);
+}
+.toastSubtitle { font-family: 'Pixelify Sans', sans-serif; font-weight: 700; color: var(--void); opacity: 0.8; margin-top: 2px; }
+
+/* Red fill. Only the background COLOUR is overridden — the 4px dither from the shared panel
+   rule stays on top of it, so these read as the same material as the rest of the UI rather
+   than as a flat web block. */
+.toast { background-color: var(--chrome) !important; }
+
+/* ---- Chest toasts, tiered by rarity -----------------------------------------------------
+   Typography, spine, chevrons and layout are untouched — only the fill and the ink change, so
+   the card still reads as the same object at every tier. The dither overlay from the shared
+   panel texture rides on top of whichever fill is set, as it does on the default red.
+
+   Text colour is a token per tier rather than the inherited off-black, and every pair was
+   measured rather than eyeballed (the ratios below, against the 3:1 bar for bold text at this
+   size). Unique started as gold on --chrome and came back 2.96:1 — a fail — so its red is the
+   deeper --blood, which keeps "red with gold text" and clears the bar with room to spare.
+
+   Legendary was not specified; it sits between epic and unique as a gold card with dark ink,
+   which is the one step the sequence was missing. Say the word if it wants to be something
+   else. */
+.toastTier { color: var(--toast-ink) !important; }
+.toastTier .toastTitle,
+.toastTier .toastSubtitle { color: var(--toast-ink) !important; }
+/* The chevrons are hard-coded gold, which would vanish on the gold legendary card. They follow
+   the tier's ink instead, so they frame the type at every tier the way they do on the default. */
+.toastTier .toastTitle::before { color: var(--toast-ink) !important; }
+/* The spine takes the tier's ink rather than the accent from loot.js. Two colours per card —
+   an ink for the type and a separate identity colour on the edge — read as two competing
+   signals; one colour for everything that is not the fill makes the card a single statement.
+   The fill still carries the tier, so nothing is lost by dropping the second hue. */
+.toastTier { border-right-color: var(--toast-ink) !important; }
+
+.toastTier-common    { background-color: #b9bec7 !important; --toast-ink: #12111a; } /* 10.04:1 */
+.toastTier-rare      { background-color: #33333a !important; --toast-ink: #e6c14e; } /*  7.22:1 */
+.toastTier-epic      { background-color: #3a2050 !important; --toast-ink: #e0574a; } /*  3.75:1 */
+.toastTier-legendary { background-color: #c9a227 !important; --toast-ink: #12111a; } /*  7.75:1 */
+.toastTier-unique    { background-color: #7a1f1a !important; --toast-ink: #e6c14e; } /*  5.94:1 */
+/* The spine is a flat gold. Callers still pass their per-toast colour through --accent
+   (rarity tier, event type) and it is still set on the element — this rule just overrides what
+   the border does with it, so putting the signal back is one line. */
+.toast { border-right-color: var(--gold-bright); }
+@media (max-width: 800px) {
+  .classList, .cardList { grid-template-columns: 1fr; }
+  .topBar { flex-direction: column; gap: 8px; width: 90vw; }
+  .barGroup { width: 100%; }
+}
+
+/* =========================================================================
+   PIXEL-ART UI PASS
+   Trade the clean vector look (rounded corners, smooth gradients, blurred
+   glows, vector filigree) for sharp corners, hard stepped bevels and flat,
+   dithered fills so the chrome matches the game's pixel sprites.
+   ========================================================================= */
+#game { image-rendering: pixelated; }
+
+/* Sharp corners on all UI chrome. */
+.overlayInner, .hudPanel, .chip, .goldChip, .bar, .xpTop, .bossBarBg, .bossBarWrap .bar,
+.gemIcon, .traySmall .gemIconSmall, .classCard, .levelCard, .settingRow, .settingOption,
+.volumeControl, .shopRow, .shopBuyBtn, .pip, .leaderboardRow, .primaryBtn, .ghostBtn,
+.rerollBtn, .toast, .gamepadStatus, .classDot, .volumeSlider, .samplePlay, .devIcon {
+  border-radius: 0 !important;
+}
+
+/* Flat, dithered panel texture (4px checker) instead of the soft vertical gradient. */
+.overlayInner, .classCard, .levelCard, .settingRow, .settingOption, .toast, .bossBarWrap .bar,
+.gemIcon, .hudPanel, .chip, .shopRow, .leaderboardRow {
+  background-color: var(--panel-hi);
+  background-image: var(--dither);
+  background-size: 4px 4px;
+  background-position: 0 0, 2px 2px;
+  background-repeat: repeat;
+}
+
+/* Big overlay panels — chunky double pixel frame, no filigree. */
+.overlayInner {
+  border: 3px solid var(--iron) !important;
+  /* In-game panels (pause, level up, shop, settings, end screen) keep the black ring and inner
+     bevel. The main menu drops all of it — see the override below. */
+  box-shadow: 0 0 0 4px var(--void),
+              inset 3px 3px 0 rgba(120,120,132,0.45), inset -3px -3px 0 rgba(0,0,0,0.6) !important;
+}
+#mainMenu .overlayInner {
+  border-color: transparent !important;
+  /* A raised pixel bevel instead of an outline. The old 1px red hairline sat flush to the rim
+     and, against the moving carousel behind it, read as a hard cut-out competing with the three
+     red keylines inside. A bevel gives the panel depth from its own shading rather than by
+     drawing a line around it: lit along the top-left, shadowed along the bottom-right, the same
+     light every button and tile in the game is lit by.
+     Inset, so it stays INSIDE the panel — no outer ring to fight the keylines or the art. */
+  box-shadow: inset 3px 3px 0 rgba(140,140,152,0.40),
+              inset -3px -3px 0 rgba(0,0,0,0.62) !important;
+}
+
+/* Hard stepped bevel for framed sub-panels & interactive tiles. */
+.hudPanel, .classCard, .levelCard, .settingRow, .settingOption, .shopRow, .leaderboardRow,
+.chip, .gamepadStatus {
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.35), inset -2px -2px 0 rgba(0,0,0,0.55) !important;
+}
+.settingOption.active {
+  border-color: var(--gold-bright) !important;
+  box-shadow: inset 2px 2px 0 rgba(201,162,39,0.5), inset -2px -2px 0 rgba(0,0,0,0.55) !important;
+}
+
+/* Buttons — raised pixel bevel, flat fills; pressed state inverts the bevel. */
+.primaryBtn, .samplePlay, .devIcon:hover, .devIcon.on {
+  background: var(--gold-bright) !important; border: 2px solid #5c4a1a !important;
+  box-shadow: inset 2px 2px 0 rgba(255,240,190,0.55), inset -2px -2px 0 rgba(0,0,0,0.4) !important;
+}
+.primaryBtn:active, .samplePlay:active, .devIcon.on:active, .devIcon:hover:active {
+  box-shadow: inset -2px -2px 0 rgba(255,240,190,0.4), inset 2px 2px 0 rgba(0,0,0,0.4) !important;
+}
+.ghostBtn, .shopBuyBtn, .devIcon {
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.4), inset -2px -2px 0 rgba(0,0,0,0.55) !important;
+}
+.ghostBtn:active, .shopBuyBtn:active, .devIcon:active {
+  box-shadow: inset -2px -2px 0 rgba(120,120,132,0.4), inset 2px 2px 0 rgba(0,0,0,0.55) !important;
+}
+
+/* Flat bar fills — kill the glossy gradients and glow. */
+/* The life bar is filled with the same 4px checker as the panels and the toasts, so the bar
+   reads as a plate of the same material rather than a flat coloured strip. Longhand, not the
+   `background` shorthand: the shorthand resets background-image, which is the one property
+   doing the work here. The pattern is anchored to the fill's own box, so it is revealed and
+   consumed from the left as the bar moves instead of sliding under a fixed mask. */
+.hpBar .barFill, .bossFill {
+  background-color: var(--blood-bright) !important;
+  background-image: var(--dither) !important;
+  background-size: 4px 4px !important;
+  background-position: 0 0, 2px 2px !important;
+  background-repeat: repeat !important;
+  box-shadow: none !important;
+}
+.xpBar .barFill, .xpTopFill { background: var(--gold-bright) !important; box-shadow: none !important; }
+.bar, .xpTop, .bossBarBg { box-shadow: inset 2px 2px 0 rgba(0,0,0,0.5) !important; }
+
+/* Square, chunky pips & class dots. */
+.pip.filled { box-shadow: none !important; }
+.classDot { box-shadow: 0 0 0 2px rgba(0,0,0,0.5) !important; }
+
+/* Blocky volume slider (square track + thumb, no glow). */
+.volumeSlider::-webkit-slider-thumb { border-radius: 0 !important; box-shadow: none !important; border-width: 2px !important; }
+.volumeSlider::-moz-range-thumb { border-radius: 0 !important; box-shadow: none !important; }
+.volumeSlider::-moz-range-track { border-radius: 0 !important; }
+
+/* Crisp, hard focus ring. */
+.gpFocused { outline: 3px solid var(--gold-bright) !important; outline-offset: 0 !important; }
+
+/* Pixel font on all button labels (was gothic Cinzel). */
+.primaryBtn, .ghostBtn, .shopBuyBtn, .rerollBtn, .samplePlay, .devIconLabel {
+  font-family: 'Pixelify Sans', sans-serif !important; font-weight: 600;
+}
+
+/* Gold readouts in bold pixel letters (were gothic Cinzel). */
+.goldBanner, .shopGold, .hudGoldRow, .hudGoldLabel, .goldChip {
+  font-family: 'Pixelify Sans', sans-serif !important; font-weight: 700;
+}
+/* Every numeric readout across the game in bold pixel (HUD, end screen, leaderboard, etc.). */
+.hudTime, .hudKills, .hudStage, .hudPanelVal, .xpTopLabel, .endStats b, .endStats span,
+.leaderboardStat b, .leaderboardStat, .leaderboardRank, .volumeValue,
+.leaderboardClass, .leaderboardClass small, .leaderboardEmpty {
+  font-family: 'Pixelify Sans', sans-serif !important; font-weight: 700;
+}
+
+/* =========================================================================
+   PIXEL ORNAMENTATION — chunky titles, jeweled frames & blocky filigree so
+   the menus read rich, not plain, within the pixel-art style.
+   ========================================================================= */
+
+/* Chunky pixel title font for menu screen headings, with a hard blocky shadow. */
+.sectionTitle, .gameTitle {
+  font-family: 'Press Start 2P', 'Pixelify Sans', monospace !important;
+  letter-spacing: 0 !important; color: var(--gold-bright);
+  text-shadow: 3px 3px 0 #000, 0 0 0 #000 !important;
+}
+.sectionTitle { font-size: 19px !important; line-height: 1.35; margin: 4px 0 12px !important; }
+.gameTitle { font-size: 34px !important; line-height: 1.25; }
+
+/* Menu sub-headings drop gothic Cinzel for the pixel body font (bold). */
+.settingLabel, .levelCardTitle, .classCardName, .shopName {
+  font-family: 'Pixelify Sans', sans-serif !important; font-weight: 700;
+}
+
+/* Overlay panels: jeweled corner studs + THREE concentric keyline strokes joined at the
+   corners by tiny hollow squares, all over the dither. 4 studs, 4 squares, 12 line layers
+   (three rectangles x four sides), 2 dither = 22 layers.
+
+   background-position/size/repeat are matched to the images index by index. CSS silently
+   CYCLES a short list rather than erroring, so all four must stay the same length — a
+   mismatch scatters the layers instead of failing visibly. */
+.overlayInner {
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='%23c9382e'/><rect x='1' y='1' width='8' height='8' fill='%238a2118'/><rect x='2' y='2' width='6' height='6' fill='%235c1512'/><rect x='3' y='3' width='4' height='4' fill='%23d15a4d'/><rect x='4' y='4' width='2' height='2' fill='%23f0b0a0'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='%23c9382e'/><rect x='1' y='1' width='8' height='8' fill='%238a2118'/><rect x='2' y='2' width='6' height='6' fill='%235c1512'/><rect x='3' y='3' width='4' height='4' fill='%23d15a4d'/><rect x='4' y='4' width='2' height='2' fill='%23f0b0a0'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='%23c9382e'/><rect x='1' y='1' width='8' height='8' fill='%238a2118'/><rect x='2' y='2' width='6' height='6' fill='%235c1512'/><rect x='3' y='3' width='4' height='4' fill='%23d15a4d'/><rect x='4' y='4' width='2' height='2' fill='%23f0b0a0'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='%23c9382e'/><rect x='1' y='1' width='8' height='8' fill='%238a2118'/><rect x='2' y='2' width='6' height='6' fill='%235c1512'/><rect x='3' y='3' width='4' height='4' fill='%23d15a4d'/><rect x='4' y='4' width='2' height='2' fill='%23f0b0a0'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='5'><rect x='0.5' y='0.5' width='4' height='4' fill='none' stroke='%23c9382e' stroke-width='1'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='5'><rect x='0.5' y='0.5' width='4' height='4' fill='none' stroke='%23c9382e' stroke-width='1'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='5'><rect x='0.5' y='0.5' width='4' height='4' fill='none' stroke='%23c9382e' stroke-width='1'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='5'><rect x='0.5' y='0.5' width='4' height='4' fill='none' stroke='%23c9382e' stroke-width='1'/></svg>"),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(45deg, rgba(0,0,0,0.16) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.16) 75%, rgba(0,0,0,0.16)),
+    linear-gradient(45deg, rgba(0,0,0,0.16) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.16) 75%, rgba(0,0,0,0.16)) !important;
+  background-position:
+    8px 8px, right 8px top 8px, left 8px bottom 8px, right 8px bottom 8px,
+    left 11px top 11px, right 11px top 11px, left 11px bottom 11px, right 11px bottom 11px,
+    13px 13px, left 13px bottom 13px, 13px 13px, right 13px top 13px,
+    16px 16px, left 16px bottom 16px, 16px 16px, right 16px top 16px,
+    19px 19px, left 19px bottom 19px, 19px 19px, right 19px top 19px,
+    0 0, 2px 2px !important;
+  background-size:
+    10px 10px, 10px 10px, 10px 10px, 10px 10px,
+    5px 5px, 5px 5px, 5px 5px, 5px 5px,
+    calc(100% - 26px) 1px, calc(100% - 26px) 1px, 1px calc(100% - 26px), 1px calc(100% - 26px),
+    calc(100% - 32px) 1px, calc(100% - 32px) 1px, 1px calc(100% - 32px), 1px calc(100% - 32px),
+    calc(100% - 38px) 1px, calc(100% - 38px) 1px, 1px calc(100% - 38px), 1px calc(100% - 38px),
+    4px 4px, 4px 4px !important;
+  background-repeat:
+    no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat,
+    no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat,
+    no-repeat, no-repeat, no-repeat, no-repeat, repeat, repeat !important;
+  image-rendering: pixelated;
+}
+
+/* Blocky pixel divider (replaces the smooth vector flourish). */
+.titleFlourish {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='16'><g fill='%23a8842f'><rect x='34' y='7' width='66' height='2'/><rect x='140' y='7' width='66' height='2'/><rect x='30' y='6' width='2' height='4'/><rect x='208' y='6' width='2' height='4'/></g><g fill='%23c9382e'><rect x='116' y='6' width='8' height='4'/><rect x='114' y='7' width='2' height='2'/><rect x='124' y='7' width='2' height='2'/><rect x='118' y='4' width='4' height='2'/><rect x='118' y='10' width='4' height='2'/></g><rect x='119' y='7' width='2' height='2' fill='%235c1512'/></svg>") !important;
+  image-rendering: pixelated;
+}
+
+/* Gold pixel corner brackets frame each menu tile so nothing feels bare. */
+.settingRow, .settingOption, .classCard, .levelCard, .shopRow, .leaderboardRow { position: relative; }
+.settingRow::before, .settingOption::before, .classCard::before, .levelCard::before, .shopRow::before, .leaderboardRow::before,
+.settingRow::after, .settingOption::after, .classCard::after, .levelCard::after, .shopRow::after, .leaderboardRow::after {
+  content: ''; position: absolute; width: 7px; height: 7px; opacity: 0.55; pointer-events: none;
+}
+.settingRow::before, .settingOption::before, .classCard::before, .levelCard::before, .shopRow::before, .leaderboardRow::before {
+  top: 3px; left: 3px; border-top: 2px solid var(--gold); border-left: 2px solid var(--gold);
+}
+.settingRow::after, .settingOption::after, .classCard::after, .levelCard::after, .shopRow::after, .leaderboardRow::after {
+  bottom: 3px; right: 3px; border-bottom: 2px solid var(--gold); border-right: 2px solid var(--gold);
+}
+
+/* =========================================================================
+   Body + heading font sizes scaled up ~75% (menus / overlays / buttons).
+   The gameplay HUD and the canvas title keep their own sizing.
+   ========================================================================= */
+.gameTitle { font-size: 60px !important; }
+.sectionTitle { font-size: 33px !important; }
+.classCardName { font-size: 33px !important; }
+.levelCardTitle { font-size: 35px !important; }
+.settingLabel { font-size: 28px !important; }
+.shopName { font-size: 26px !important; }
+.goldBanner, .shopGold { font-size: 32px !important; }
+.endStats b { font-size: 42px !important; }
+.leaderboardStat b, .shopBuyBtn { font-size: 25px !important; }
+.gameSubtitle { font-size: 26px !important; }
+.primaryBtn { font-size: 28px !important; }
+.classCardDesc, .levelCardDesc, .leaderboardClass, .leaderboardEmpty, .settingOptionLabel,
+.volumeValue, .toastTitle, .ghostBtn { font-size: 23px !important; }
+.classCardTag, .classCardStats, .classCardSkill, .endStats span, .shopDesc, .leaderboardStat,
+.settingLabelDesc, .toastSubtitle, .inputHint, .pauseControls { font-size: 21px !important; }
+.levelCardSubtitle, .settingOptionDesc { font-size: 19px !important; }
+.leaderboardClass small { font-size: 18px !important; }
+
+/* Larger in-game HUD boxes + readouts (offsets nudged to avoid overlapping the XP bar). */
+:root { --xp-h: 26px; }
+.xpTopLabel { font-size: 18px; line-height: 26px; }
+.hudPanel { top: 34px; padding: 12px 16px; }
+.hudVitals { width: 300px; }
+.hudPanelTitle { font-size: 16px; }
+.hudVitals .hudPanelTitle { margin-top: 6px; }
+.hudPanelVal { font-size: 16px; }
+.hudVitals .bar { height: 18px; }
+/* Gold down 20% (66px), and the key count set to match it rather than sitting at half its
+   size. They are the same kind of readout — a resource you are carrying — so reading as two
+   different tiers of importance was the wrong signal; a key is arguably the scarcer of the
+   two. One shared value so they cannot drift apart again. */
+:root { --hud-count-size: 52.8px; }
+.hudGoldRow { font-size: var(--hud-count-size); }
+.hudGoldLabel { font-size: 30px; }
+.hudKeyGroup #keyCountText { font-size: var(--hud-count-size) !important; }
+/* The icon follows the type it sits beside, or a 53px number next to a 28px key reads as a
+   mismatch rather than a pair. */
+.hudKeyGroup .keyIcon { width: 42px; height: 42px; }
+
+/* Cheat toggles as a grid. They are independent switches rather than a sequence, so a column
+   made you scroll a page to reach the last one — on the screen you open specifically to flip
+   something quickly. `align-items: start` keeps a two-line description from stretching the row
+   its neighbours sit in. */
+/* No ancestor in the selector: paginateDevTools lifts these sections out of #devCheats into a
+   .devPage wrapper, so anything scoped to .settingsList stops matching the moment the panel
+   paginates — which is always. */
+.settingOptions.cheatGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px;
+  align-items: start;
+}
+.cheatGrid .settingOption { margin: 0; height: 100%; }
+
+/* ---------- Readout tables (tome breakpoints, level-up odds) ---------- */
+/* Both are the same idea: the chart tells you the shape, the table tells you the number you will
+   actually read on a card. Tabular figures so columns line up down the page — a table of values
+   compared across rows is unreadable with proportional digits. */
+.breakTable, .oddsTable {
+  grid-column: 1 / -1;
+  font-family: 'Pixelify Sans', sans-serif;
+  font-size: 12px;
+  margin: 6px 0 2px;
+}
+.breakRow {
+  display: grid; align-items: center;
+  grid-template-columns: 116px repeat(6, minmax(0, 1fr));
+  gap: 0 6px; padding: 2px 4px;
+}
+.breakRow:nth-child(even) { background: rgba(255, 255, 255, 0.025); }
+.breakHead { color: var(--bone-dim); border-bottom: 1px solid rgba(255, 255, 255, 0.09); }
+.breakName { color: var(--c, var(--bone)); text-align: left; font-weight: 700; }
+.breakCell { text-align: right; font-variant-numeric: tabular-nums; color: var(--bone); }
+.breakHead .breakCell { color: var(--bone-dim); font-weight: 700; }
+
+/* The odds row is a stacked bar rather than five numbers: the question is proportion, and a bar
+   answers it without arithmetic. Segments under 0.05% are dropped rather than drawn as slivers
+   too thin to see but wide enough to shift everything beside them. */
+.oddsRow {
+  display: grid; align-items: center;
+  grid-template-columns: 130px 1fr 52px; gap: 0 8px; padding: 2px 4px;
+}
+.oddsLabel { color: var(--bone-dim); }
+.oddsBars { display: flex; height: 12px; border-radius: 2px; overflow: hidden;
+  background: rgba(0, 0, 0, 0.35); }
+.oddsSeg { background: var(--c); min-width: 1px; }
+.oddsAny { text-align: right; font-variant-numeric: tabular-nums; color: var(--gold-bright); font-weight: 700; }
+.oddsFoot { color: var(--bone-dim); font-size: 10px; padding: 4px 4px 0; line-height: 1.35; }
+
+/* ---- Gold and keys at half size ----
+   The counters had grown to where they were the loudest thing on the screen — a 53px gold
+   figure competing with the boss bar and the stage title for the top of the frame, over a
+   number that changes slowly and is never urgent. Everything in the panel halves together:
+   type, glyph, padding and gaps, so the block keeps its proportions and simply takes up half
+   the room. Scoped to .hudRunTotals rather than to .hudPanel, which the life panel also uses.
+
+   THEN +50% across the board, once the block moved to the top-left corner. Every number below
+   is the halved value times 1.5 — type, glyph, padding, gaps and the glow radius together — for
+   the same reason the halving touched all of them: scaling only the type would leave the
+   counters rattling around inside padding sized for the old ones. */
+:root { --hud-count-size: 39.6px; }
+.hudGoldLabel { font-size: 22.5px; }
+.hudKeyGroup .keyIcon { width: 31.5px; height: 31.5px; }
+.hudRunTotals { min-width: 72px; }
+.hudRunTotalsRow { gap: 10.5px; }
+.hudKeyGroup { gap: 4.5px; }
+#hud .hudPanel.hudRunTotals { padding: 9px 12px; }
+/* The glow tracks the type: sized for 53px, halved with it, and back up by the same 1.5. */
+.hudGoldRow { text-shadow: 0 0 7.5px rgba(201,162,39,0.35); }
+.hudCenter { top: 32px; }
+.hudTime { font-size: 40px; }
+/* +70% (16 -> 27). Set here because this later declaration is the one that actually wins over
+   the 11px in the base HUD block above — editing that one would have changed nothing. */
+.hudStage { font-size: 27px; }
+.hudKills { font-size: 62px; line-height: 1.05; margin-top: 6px; }
+/* Cleared below the centre HUD stack. Measured, not guessed: the stage/kills/time block
+   bottoms out at y=185 now that the stage name is 27px, and the boss name is the top of this
+   wrap — 190 left only 5px between them. Re-measured rather than nudged by feel. */
+.bossBarWrap { top: 208px; }
+
+/* Hide the default scrollbars everywhere in the UI — menus scroll via wheel/right stick. */
+.overlayInner, .unlocksBody, .sandboxBody, .leaderboardList, .settingsList, .devBody,
+#musicBody, .mainMenuActions, .classCarousel, .shopList, .statPanels, .endStats {
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.overlayInner::-webkit-scrollbar, .unlocksBody::-webkit-scrollbar, .sandboxBody::-webkit-scrollbar,
+.leaderboardList::-webkit-scrollbar, .settingsList::-webkit-scrollbar, #musicBody::-webkit-scrollbar,
+.mainMenuActions::-webkit-scrollbar, .classCarousel::-webkit-scrollbar,
+.shopList::-webkit-scrollbar, .statPanels::-webkit-scrollbar, .endStats::-webkit-scrollbar,
+.devBody::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* Music player track list stacks vertically. */
+.settingOptionsList { flex-direction: column; }
+.settingOptionsList .settingOption { width: 100%; flex: none; }
+
+/* Unlocks screen — grid of skill gems. */
+/* The catalogue scrolls as ONE column of sections, so the Skills and Tomes grids can't
+   scroll independently of their own headings. */
+/* ---- Scroll regions live INSIDE the frame ----------------------------------------------
+   A panel that scrolls itself clips its content at its own padding box, which sits just
+   inside the 3px border — while the triple keyline is painted 11/13/16px further in. Scrolled
+   rows therefore slid underneath all three lines and were cut off flush against the panel
+   edge, so the frame stopped reading as a container and started reading as a crop.
+   Measured: the clip landed 13px above the innermost keyline.
+
+   The fix is to scroll a region nested inside the panel rather than the panel itself. Sitting
+   within .overlayInner's 24px padding, its clip edge falls comfortably inside the innermost
+   keyline, so all three lines stay whole and visibly contain the list. Every long panel gets
+   one — the two below were the ones still scrolling at the panel level. */
+.unlocksBody { max-height: 58vh; overflow-y: auto; padding: 4px; margin-bottom: 20px; }
+#musicBody { overflow-y: auto; padding: 4px; margin-bottom: 16px; }
+.settingsList { overflow-y: auto; padding: 4px; }
+
+/* ---- The frame is a container, everywhere -----------------------------------------------
+   A panel that scrolls ITSELF clips at its own padding box, just inside the 3px border, while
+   the triple keyline is painted 11/13/16px further in. Scrolled content therefore slid under
+   all three lines and was cut off flush against the panel edge — measured at 13px above the
+   innermost keyline. The frame stopped reading as a container and started reading as a crop.
+
+   So no panel scrolls. Each lays out as a column, keeps its heading and buttons at their
+   natural size, and hands ALL the leftover height to one designated body — which scrolls
+   inside the frame, well clear of the keylines. The panel is `overflow: hidden`, so there is
+   no second scrollbar and nothing can escape the border.
+
+   min-height: 0 is load-bearing. A flex item will not shrink below its content by default, so
+   without it the body pushes the panel back out and the panel starts scrolling again.
+
+   Adding a new overlay: give it one child from the list below, or add its body to that list.
+   Anything not listed simply has to fit, which is true of the short panels. */
+.overlay > .overlayInner {
+  display: flex; flex-direction: column; align-items: stretch;
+  overflow: hidden;
+}
+/* The scrolling body of each panel. */
+.unlocksBody, .sandboxBody, .leaderboardList, .settingsList, .devBody,
+#musicBody, .mainMenuActions, .classCarousel, .shopList, .statPanels, .endStats {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  /* Room for the focus strokes. `overflow-y: auto` makes overflow-x compute to auto as well, so
+     these became clipping boxes on ALL four sides — and a focus ring is painted OUTSIDE the
+     border box (2px stroke at 3px offset on the primary button, 3px at 0 on everything else).
+     A button flush against the container edge therefore had its stroke shaved off the top and
+     sides, which is exactly what happened to Play Game: it sits at offset 0,0 in this box.
+     Padding moves the content in from the clip edge, so the stroke has somewhere to land.
+     Scroll containers clip at the PADDING box, so this space is inside the clip, not outside. */
+  padding: calc(var(--focus-ring-room) + var(--focus-lift))
+           var(--focus-ring-room) var(--focus-ring-room);
+}
+/* Inside the one Dev Tools body, nothing else may scroll. #devCheats carries .settingsList and
+   the two tuning grids carry .devTuning, all of which are designated bodies in their own right
+   elsewhere — left alone they nest, and a nested scroller is what turned each section into its
+   own crop box. They lay out at full height here and let the one body do the scrolling. */
+.devBody > .settingsList, .devBody > .devTuning {
+  flex: none; min-height: auto; overflow: visible; padding: 0;
+}
+
+/* nowrap is essential, not tidying. .settingOptions sets flex-wrap: wrap, and a wrapping flex
+   COLUMN with a constrained height does not overflow — it starts a second column, then a
+   third. The music list silently reflowed into columns of overlapping rows instead of
+   scrolling: 18 rows 44px tall reported a 138px visual span. */
+#musicBody, .settingsList { flex-wrap: nowrap; }
+/* A flex item with `margin: 0 auto` does not stretch — it shrinks to its content. That is
+   fine for a block, which is what these were, but as flex items the main-menu button column
+   collapsed from 320px to 143px and the deaths/gold row from the panel width to 82px, pulling
+   the two counters together. Restoring an explicit width puts them back; max-width and the
+   auto margins still centre them. */
+.mainMenuActions, .menuStatRow, .classCarousel, .shopList, .statPanels, .endStats { width: 100%; }
+
+/* Everything that is NOT the body keeps its own size and is never squeezed to make room. */
+.overlay > .overlayInner > .sectionTitle,
+.overlay > .overlayInner > .titleFlourish,
+.overlay > .overlayInner > .gameSubtitle,
+.overlay > .overlayInner > .inputHint,
+.overlay > .overlayInner > .titleArt,
+.overlay > .overlayInner > .menuStatRow,
+.overlay > .overlayInner > .pauseActions,
+.overlay > .overlayInner > .primaryBtn,
+.overlay > .overlayInner > .ghostBtn,
+.overlay > .overlayInner > h1,
+.overlay > .overlayInner > h2,
+.overlay > .overlayInner > p { flex: 0 0 auto; }
+/* Fixed-size siblings must not be squeezed to make room for the list. */
+#musicMenu .sectionTitle, #musicMenu .titleFlourish, #musicMenu .gameSubtitle,
+#musicMenu #musicModes, #musicMenu #musicTransport, #musicMenu #closeMusicBtn { flex: 0 0 auto; }
+.unlockSection + .unlockSection { margin-top: 26px; }
+.unlockSectionTitle {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 20px; color: var(--gold-bright);
+  text-align: left; letter-spacing: 1px; margin: 0 0 12px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--iron);
+}
+.unlocksGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+/* ---- Sandbox setup ---- */
+.sandboxBody { max-height: 62vh; overflow-y: auto; padding: 4px; margin-bottom: 16px; text-align: left; }
+.sandboxSection + .sandboxSection { margin-top: 22px; }
+.sandboxGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 10px; }
+.sandboxEnemyGrid { grid-template-columns: repeat(6, 1fr); }
+.sandboxCell {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 6px 8px; border: 1px solid var(--iron); border-radius: 3px;
+  background: var(--panel-lo); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4);
+}
+/* Unselected entries dim rather than disappear — the grid stays a stable map of what exists. */
+.sandboxCell.off { opacity: 0.42; }
+.sandboxIconBtn { cursor: pointer; background: none; padding: 0; width: 52px !important; height: 52px !important; }
+.sandboxCell .unlockName { font-size: 13px; }
+.sandboxStars { display: flex; gap: 2px; }
+.sandboxStar {
+  background: none; border: none; padding: 0 1px; cursor: pointer; line-height: 1;
+  font-size: 15px; color: var(--iron); font-family: inherit;
+}
+.sandboxStar.on { color: var(--gold-bright); }
+.sandboxStar:hover, .sandboxStar.gpFocused { color: var(--bone); }
+.sandboxSlider { display: flex; align-items: center; gap: 6px; width: 100%; }
+.sandboxSlider input[type="range"] { flex: 1; min-width: 0; }
+.sandboxSlider label { font-family: 'Pixelify Sans', sans-serif; font-size: 13px; color: var(--bone-dim); }
+.sandboxSlider.wide { max-width: 420px; }
+.sandboxSliderVal { font-family: 'Pixelify Sans', sans-serif; font-size: 12px; color: var(--bone); min-width: 38px; text-align: right; }
+.sandboxEnemyBtn {
+  width: 100%; aspect-ratio: 1; padding: 0; cursor: pointer; background: #14100c;
+  border: 1px solid var(--iron); border-radius: 3px; display: grid; place-items: center;
+}
+.sandboxEnemyBtn.picked { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
+/* Bosses get a portrait card instead of the roster's square one — see the note in ui.js. Three
+   of them, so the row is narrower too: at six columns a card this tall would be a sliver.
+   96/184 must match the canvas backing store set alongside that note. */
+.sandboxBossGrid { grid-template-columns: repeat(3, 1fr); max-width: 62%; }
+.sandboxBossGrid .sandboxEnemyBtn { aspect-ratio: 96 / 184; }
+.sandboxEnemyPortrait { width: 100%; height: 100%; image-rendering: pixelated; }
+.sandboxEnemyOpts { margin-top: 14px; padding: 12px; border: 1px solid var(--iron); border-radius: 3px; background: var(--panel-lo); }
+.sandboxOptTitle { font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 16px; color: var(--gold-bright); margin-bottom: 10px; }
+.sandboxEnemyOpts .settingOptions { margin-top: 10px; }
+/* Cells read as buttons ahead of being selectable: framed and raised, but no cursor or hover
+   state, so they don't promise an interaction that isn't wired yet. */
+.unlockCell {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 14px 8px 12px; border: 1px solid var(--iron); border-radius: 3px;
+  background: var(--panel-lo); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4);
+}
+.unlockIcon { width: 64px !important; height: 64px !important; }
+.unlockName { font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 17px; color: var(--bone); text-align: center; line-height: 1.15; }
+
+/* Full-screen stage title card (no background — gameplay stays visible). */
+.stageCard {
+  position: fixed; inset: 0; z-index: 9; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  opacity: 0; transition: opacity 0.4s ease;
+}
+.stageCard.show { opacity: 1; transition: opacity 0.3s ease; }
+.stageCard.fading { opacity: 0; transition: opacity 0.66s ease; }
+.stageCardTitle {
+  font-family: 'Press Start 2P', 'Pixelify Sans', monospace; font-size: 42px; max-width: 92vw;
+  color: var(--gold-bright); text-shadow: 4px 4px 0 #000, 0 0 34px rgba(201,162,39,0.45);
+  line-height: 1.25; margin-bottom: 24px;
+}
+.stageCardSub {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 30px; max-width: 88vw;
+  color: var(--bone); text-shadow: 3px 3px 0 #000;
+}
+
+/* ---------- Blood variant: the horde-rush announcement ---------- */
+/* The gold card is an arrival — a place, calmly named. This one is a warning, so it takes the
+   opposite treatment: hot blood gradient instead of gold, and it does not simply fade up. It
+   lands hard and rattles itself still, because what it is announcing is a timer on your life. */
+.stageCard.blood .stageCardTitle {
+  font-size: 58px; letter-spacing: 0.04em;
+  background: linear-gradient(180deg, #ff7a55 0%, #e04a2a 34%, #a13328 66%, #6b1a15 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  /* drop-shadow rather than text-shadow: it follows the glyph alpha, so the glow reads as heat
+     coming off the letters instead of a flat slab sitting behind them. */
+  filter: drop-shadow(3px 4px 0 #000) drop-shadow(0 0 26px rgba(200,45,25,0.55));
+  animation: hordeSlam 1.15s cubic-bezier(0.12, 0.9, 0.2, 1) both;
+}
+.stageCard.blood .stageCardSub {
+  color: #e8b4a4;
+  animation: hordeSlamSub 1.15s ease-out both;
+}
+/* One keyframe track doing both jobs: the scale punch decays over the first third, and the
+   shake decays with it, so the card is violent on arrival and settled by the time it is read.
+   Rotation is tiny — past about a degree it stops reading as impact and starts reading as a
+   loose UI element. */
+@keyframes hordeSlam {
+  0%   { transform: scale(1.55) translate(0, 0) rotate(0deg); opacity: 0; }
+  8%   { transform: scale(1.02) translate(-13px, 7px) rotate(-0.9deg); opacity: 1; }
+  16%  { transform: scale(1.06) translate(11px, -8px) rotate(0.8deg); }
+  24%  { transform: scale(0.99) translate(-9px, -5px) rotate(-0.6deg); }
+  33%  { transform: scale(1.03) translate(8px, 6px) rotate(0.5deg); }
+  43%  { transform: scale(1) translate(-6px, 3px) rotate(-0.35deg); }
+  54%  { transform: scale(1) translate(4px, -3px) rotate(0.25deg); }
+  66%  { transform: scale(1) translate(-3px, 2px) rotate(-0.15deg); }
+  79%  { transform: scale(1) translate(2px, -1px) rotate(0.08deg); }
+  90%  { transform: scale(1) translate(-1px, 1px) rotate(0deg); }
+  100% { transform: scale(1) translate(0, 0) rotate(0deg); }
+}
+/* The subtitle arrives after the worst of the shake, so there is something legible to land on. */
+@keyframes hordeSlamSub {
+  0%, 22% { opacity: 0; transform: translateY(10px); }
+  100%    { opacity: 1; transform: translateY(0); }
+}
+
+/* LIFE stats box doubled — the panel, its bar, and its text. */
+.hudVitals { width: 440px; padding: 18px 24px; }
+.hudVitals .hudPanelTitle { font-size: 22px; margin-top: 8px; }
+.hudVitals .hudPanelVal { font-size: 22px; }
+.hudVitals .bar { height: 26px; }
+
+/* Bolder, gold-trimmed boss name + health bar. */
+.bossBarWrap { width: 560px; }
+.bossBarLabel {
+  font-family: 'Press Start 2P', 'Pixelify Sans', monospace; font-size: 17px; color: #e8c46a;
+  letter-spacing: 0; margin-bottom: 7px; text-shadow: 2px 2px 0 #000;
+  -webkit-text-stroke: 1px #7e611b;
+}
+.bossBarBg {
+  height: 24px; border-radius: 0 !important; border: 2px solid var(--gold);
+  box-shadow: 0 0 0 2px #000, inset 0 0 0 1px rgba(255,232,150,0.35), 0 0 14px rgba(201,162,39,0.4) !important;
+}
+.bossFill { background: linear-gradient(180deg, #b5342a, #6a140f) !important; }
+
+/* Dev-mode skill toggles: same 4-column icon grid as the Unlocks panel. Each cell switches
+   its skill on or off at the dev level ceiling; any number can be active together. */
+/* The cheats container is a flex row, so both of these must claim a full row of their own
+   or the heading floats up beside the God Mode / Max Skills buttons. */
+.devSkillHead { flex: 0 0 100%; width: 100%; margin: 12px 0 8px; color: var(--gold-bright); }
+.devSkillGrid { flex: 0 0 100%; width: 100%; max-height: none; gap: 12px; }
+.devSkillCell {
+  padding: 10px 6px; cursor: pointer; border: 2px solid var(--iron);
+  background: var(--panel-lo); opacity: 0.5; transition: opacity 0.12s, border-color 0.12s;
+}
+.devSkillCell:hover { opacity: 0.85; }
+/* Active skills read at full strength with a gold edge; inactive ones sit dimmed. */
+.devSkillCell.active { opacity: 1; border-color: var(--gold-bright);
+  box-shadow: inset 0 0 0 1px rgba(201,162,39,0.35); }
+.devSkillCell .unlockIcon { width: 44px !important; height: 44px !important; }
+.devSkillCell .unlockName { font-size: 14px; }
+
+/* ---------- Dev Tools: per-skill live stat tuning ---------- */
+.devTuning {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px;
+  margin: 16px 0 18px; text-align: left; padding: 4px;
+}
+/* A single stroke in the skill's own colour outlines the whole box. */
+.tuneBox {
+  border: 2px solid var(--accent, var(--iron));
+  background: var(--panel-lo); padding: 13px 16px;
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.25), inset -2px -2px 0 rgba(0,0,0,0.45);
+}
+/* An unequipped skill reads muted at a glance — its stroke greys out and the controls dim.
+   Still fully editable: tuning a skill before you equip it is legitimate, so this is purely
+   a visual state, not a disabled one. */
+.tuneBox.off .tuneName { color: var(--bone-dim); }
+.tuneBox.off .tuneLabel { color: #635b4d; }
+.tuneBox.off .tuneNum { color: var(--bone-dim); }
+.tuneBox.off .tuneUnit { color: #635b4d; }
+.tuneBox.off .tuneSlider { filter: grayscale(1); opacity: 0.55; }
+.tuneHead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+/* The gem icon doubles as the skill's on/off switch: dim when unequipped, lit when active. */
+.tuneIcon { width: 30px !important; height: 30px !important; flex: 0 0 auto; }
+.tuneToggle {
+  padding: 0; cursor: pointer; opacity: 0.4;
+  border: 2px solid var(--iron); transition: opacity 0.12s, border-color 0.12s;
+}
+.tuneToggle:hover:not(:disabled) { opacity: 0.8; }
+.tuneToggle.active { opacity: 1; border-color: var(--accent, var(--gold-bright)); }
+.tuneToggle:disabled { cursor: default; opacity: 0.25; }
+.tuneMax {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+  padding: 3px 8px; cursor: pointer; background: var(--panel-hi); color: var(--bone-dim);
+  border: 1px solid var(--iron);
+}
+.tuneMax:hover:not(:disabled) { color: var(--gold-bright); border-color: var(--gold); }
+/* Active MAX reads green — it's a state, not just a button you pressed. */
+.tuneMax.active { color: #0e0a06; background: #7fc46a; border-color: #7fc46a; }
+.tuneMax:disabled { opacity: 0.35; cursor: default; }
+.tuneName {
+  flex: 1; min-width: 0; font-family: 'Pixelify Sans', sans-serif; font-weight: 700;
+  font-size: 21px; color: var(--bone); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tuneReset, .tuneSave {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 17px; padding: 4px 12px; cursor: pointer;
+  background: var(--panel-hi); color: var(--bone-dim); border: 1px solid var(--iron);
+}
+.tuneReset:hover, .tuneSave:hover, .tuneReset.gpFocused, .tuneSave.gpFocused {
+  color: var(--gold-bright); border-color: var(--gold);
+}
+.tuneSave.saved { color: #7fc46a; border-color: #7fc46a; }
+.tuneList { display: flex; flex-direction: column; gap: 4px; }
+/* Fixed label and value columns so the sliders line up down the box. */
+.tuneLine { display: grid; grid-template-columns: 146px 1fr 109px; align-items: center; gap: 10px; }
+.tuneLabel { font-family: 'Pixelify Sans', sans-serif; font-size: 17px; color: var(--bone-dim); }
+/* Blocky slider to match the game's pixel-art UI: accent-color renders a round thumb, so
+   the track and thumb are drawn explicitly with square corners instead. */
+.tuneSlider {
+  width: 100%; height: 16px; cursor: pointer;
+  -webkit-appearance: none; appearance: none; background: transparent; border: 0;
+}
+.tuneSlider::-webkit-slider-runnable-track {
+  height: 6px; background: #0e0a06; border: 1px solid var(--iron); border-radius: 0;
+}
+.tuneSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 15px; margin-top: -6px; border-radius: 0;
+  background: var(--gold-bright); border: 1px solid #0e0a06;
+  box-shadow: inset -2px -2px 0 rgba(0,0,0,0.45), inset 2px 2px 0 rgba(255,255,255,0.25);
+}
+.tuneSlider::-moz-range-track {
+  height: 6px; background: #0e0a06; border: 1px solid var(--iron); border-radius: 0;
+}
+.tuneSlider::-moz-range-thumb {
+  width: 11px; height: 15px; border-radius: 0;
+  background: var(--gold-bright); border: 1px solid #0e0a06;
+}
+/* Editable value: type an exact number instead of hunting for it with the slider. */
+.tuneValWrap { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.tuneNum {
+  width: 78px; padding: 3px 5px; text-align: right;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 17px; font-weight: 700;
+  color: var(--gold-bright); background: var(--panel-lo);
+  border: 1px solid var(--iron); border-radius: 0;
+  font-variant-numeric: tabular-nums;
+}
+.tuneNum:focus { outline: none; border-color: var(--gold-bright); background: #0e0a06; color: #fff; }
+/* Keep the native spinners — they're a handy nudge — but only once the field is engaged. */
+.tuneNum::-webkit-inner-spin-button { opacity: 0; }
+.tuneNum:hover::-webkit-inner-spin-button, .tuneNum:focus::-webkit-inner-spin-button { opacity: 1; }
+.tuneUnit { font-family: 'Pixelify Sans', sans-serif; font-size: 12px; color: var(--bone-dim); }
+
+/* A tuning row focused by controller/keyboard — the row highlights, not just the thumb. */
+.tuneLine.gpFocused {
+  outline: 2px solid var(--gold-bright); outline-offset: 2px;
+  background: rgba(201,162,39,0.09);
+}
+.tuneLine.gpFocused .tuneLabel { color: var(--bone); }
+.devHint { grid-column: 1 / -1; font-family: 'Pixelify Sans', sans-serif; font-size: 18px;
+  color: var(--bone-dim); margin: 3px 0 5px; }
+/* Section headings inside the tuning grids. Full width, or the grid packs the next heading
+   into the spare column beside the previous section's last box and the page loses its order. */
+.devSectionTitle {
+  grid-column: 1 / -1;
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 23px;
+  color: var(--gold-bright); margin: 23px 0 3px;
+  border-top: 1px solid var(--iron); padding-top: 18px;
+}
+/* No rule above the first one — it already sits under the cheats block. */
+.devTuning > .devSectionTitle:first-child { border-top: none; margin-top: 4px; padding-top: 0; }
+
+/* Dev Tools is far taller than any other menu. Scroll the whole overlay rather than a
+   panel-sized box inside it: the wheel then works anywhere on screen (including the margins
+   either side of the panel, which otherwise hit the game canvas and did nothing), and there
+   is only ever one scroll region rather than nested ones. */
+#devMenu { overflow-y: auto; align-items: flex-start; padding: 3vh 0; }
+/* No backdrop behind Dev Tools.
+   Every other overlay dims the game because the game is not what you are looking at. Dev Tools
+   is the opposite: half of what it tunes is a COLOUR or a shape on the field, and judging either
+   through a 52-80% black wash means judging it wrong. The panel keeps its own opaque background,
+   so the controls stay readable while the arena behind them shows true.
+   This is not only a comfort fix — a colour sampled off the canvas with the wash in place reads
+   the wash, not the game, which is exactly how a hue slider can look broken when it is not. */
+#devMenu { background: none; }
+#devMenu .overlayInner { max-height: none; overflow: visible; margin: 0 auto; }
+#devMenu { scrollbar-width: none; -ms-overflow-style: none; }
+#devMenu::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* Dev Tools resource granters: slider + typeable field + apply button on one row. */
+.grantRow { flex: 0 0 100%; width: 100%; display: grid;
+  grid-template-columns: 78px 1fr 109px 94px; align-items: center; gap: 10px; margin-bottom: 8px; }
+.grantLabel { font-family: 'Pixelify Sans', sans-serif; font-size: 18px; color: var(--bone-dim); }
+.grantNum { width: 100%; }
+.grantBtn { font-family: 'Pixelify Sans', sans-serif; font-size: 13px; font-weight: 700;
+  padding: 4px 10px; cursor: pointer; background: var(--panel-hi); color: var(--gold-bright);
+  border: 1px solid var(--gold); }
+.grantBtn:hover, .grantBtn.gpFocused { background: var(--gold); color: #0e0a06; }
+/* Destructive, so it reads as a warning rather than another cheat toggle. */
+.zeroBtn { flex: 0 0 100%; width: 100%; border-color: #7a1f1a !important; }
+.zeroBtn:hover, .zeroBtn.gpFocused { border-color: #c94a3f !important; }
+.zeroBtn .settingOptionLabel { color: #d0503f; }
+
+/* Confirmation dialog — sits above every other overlay, including Dev Tools. */
+#confirmDialog { z-index: 24; background: radial-gradient(ellipse at center, rgba(20,12,8,0.88), rgba(3,2,1,0.96)); }
+.confirmInner { max-width: 520px; text-align: center; }
+.confirmInner .gameSubtitle { margin-bottom: 22px; font-size: 17px; color: var(--chrome-lit); }
+.confirmInner .pauseActions { justify-content: center; }
+
+/* Life panel sits hard in the corner. Written with #hud in the selector and placed last:
+   a plain `.hudVitals { top: 0 }` earlier in the file was being outranked, leaving the panel
+   at its static position 34px down. */
+#hud .hudPanel.hudVitals {
+  /* Flush to the underside of the XP strip and hard against the left edge. Driven by --xp-h
+     so it tracks the bar's height across breakpoints instead of overlapping it at one size. */
+  top: var(--xp-h); left: 0;
+  border-top-left-radius: 0; border-left-width: 0;
+}
+
+/* Upper-right cluster sits hard in its corner: the gold panel loses its right/top border so
+   it meets the screen edges the way the life panel does on the left. */
+#hud .hudPanel.hudRunTotals {
+  position: static; left: auto; right: auto;
+  border-top-left-radius: 0; border-left-width: 0;
+}
+
+/* Gold panel now matches the perf box's height, so its contents centre in that space instead
+   of hugging the top. */
+#hud .hudPanel.hudRunTotals {
+  display: flex; flex-direction: column; justify-content: center;
+}
+
+/* ---- Split main menu -----------------------------------------------------------------------
+   Two stacked panels — title/subhead above, buttons below — with a clear gap between them, so
+   the sprite carousel drawn on the canvas behind stays on show the whole time instead of being
+   covered by one tall box.
+
+   The overlay's usual near-opaque wash is dialled well back here for the same reason. It still
+   darkens the art enough to keep gold type legible over a moving background, but no longer
+   erases it. Every other overlay keeps the heavy wash — this is main-menu only. */
+#mainMenu.mainMenuSplit {
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(28px, 9vh, 110px);   /* the window onto the carousel */
+  background: radial-gradient(ellipse at center, rgba(20,12,8,0.42), rgba(3,2,1,0.72));
+}
+/* Panels size to their contents rather than filling the column, so the gap is a real gap.
+   Both are capped so that head + gap + body always fits a short window — two panels stacked
+   have to share the height that one used to have to itself, and the default 90vh cap applied
+   to each would put the lower buttons off the bottom of the screen. */
+#mainMenu.mainMenuSplit .overlayInner {
+  width: auto; max-width: min(620px, 92vw); min-width: min(440px, 92vw);
+}
+/* No max-height here on purpose. Capping it while keeping overflow visible let the subhead
+   spill straight through the panel's bottom border — the box stopped at 34vh but its contents
+   did not. The title art is bounded instead, which keeps the panel short by construction. */
+/* Padding grows AWAY from the gap — extra above the title, extra below the buttons — so both
+   boxes gain presence without narrowing the window onto the carousel between them. */
+#mainMenu.mainMenuSplit .mainMenuHead {
+  padding: 40px 24px 20px; max-height: none; overflow: visible;
+}
+/* The title art is sized down to leave the buttons their share of the column. */
+#mainMenu.mainMenuSplit .mainMenuHead .titleCanvas { max-width: 360px; }
+
+/* Subtitle band. The innermost keyline sits 19px up from the padding box and is 1px tall, so
+   its TOP edge — what the eye reads as the boundary — is 20px up; padding-bottom matches that
+   exactly so the subtitle's own box ends flush with the line.
+
+   The title canvas's radial glow fades out past its solid frame, so the canvas ELEMENT is
+   ~3.6px taller than the frame you see. Pulled back up so the band starts at the visible edge.
+
+   Centring works by making the element span the WHOLE band and centring the line inside it,
+   rather than balancing a margin above against padding below — the two gaps are then equal by
+   construction. 44.4px is that band, and matches what the old margin + line box occupied, so
+   the panel does not change height.
+
+   The em nudge is still needed: this face reports ascent 19 + descent 6 against a 20.8px line
+   box, so half-leading goes negative and the ink (14 up, 4 down) sits low in its own box.
+   Flex centres the BOX; this centres the glyphs. Measured 13.2px above and below. */
+#mainMenu.mainMenuSplit .mainMenuHead { --keyline-inset: 20px; --glow-bleed: 3.6px; }
+#mainMenu.mainMenuSplit .mainMenuHead .titleArt { margin-bottom: calc(-1 * var(--glow-bleed)); }
+#mainMenu.mainMenuSplit .mainMenuHead .gameSubtitle {
+  font-size: 20.8px !important;   /* 26px - 20% */
+  margin: 0 !important;
+  line-height: 1;
+  height: 44.4px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  top: -0.072em;   /* -1.5px at 20.8px */
+}
+#mainMenu.mainMenuSplit .mainMenuBody { padding: 14px 24px 42px; max-height: 62vh; }
+/* Deaths left, gold right, on one row that matches the BUTTON COLUMN's width rather than the
+   panel's — so both read as aligned to the buttons beneath them, which is the whole point.
+   320px/auto margins are the same values .mainMenuActions uses.
+
+   Height and flex centring mirror the subtitle band above: the row starts flush with the
+   panel's nearest keyline (padding-top below) and ends where the buttons begin, so the space
+   above and below the text is equal by construction rather than hand-tuned. */
+#mainMenu.mainMenuSplit .mainMenuBody { padding-top: var(--keyline-inset, 20px); }
+#mainMenu.mainMenuSplit .menuStatRow {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: 320px; margin: 0 auto;
+  height: 44.4px;
+}
+/* Both sit a shade high once flex has centred their line boxes — same ink-vs-box asymmetry as
+   the subtitle, measured at 2px for the pixel face and 1px for the serif. em-based so it holds
+   if the sizes change. */
+#mainMenu.mainMenuSplit .menuStatRow .goldBanner {
+  margin: 0 !important; line-height: 1; position: relative; top: 0.016em;   /* +0.5px at 32px */
+}
+#mainMenu.mainMenuSplit .menuDeaths {
+  /* Was a hardcoded hex, which is why it kept the old lighter red when the token changed. */
+  color: var(--chrome-lit); line-height: 1; position: relative; top: 0.031em;   /* +1px at 32px */
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 32px;
+  text-shadow: 0 2px 0 #000;
+}
+#mainMenu.mainMenuSplit .mainMenuActions { gap: 9px; }
+
+/* ---- Sandbox HUD ---------------------------------------------------------------------------
+   Sandbox awards neither XP nor gold, so the XP bar and the gold panel are dropped rather than
+   left displaying a permanent "Lv 1" and a frozen 0 — a readout that never changes reads as a
+   bug. Everything else is the normal HUD: Life (god mode is optional, so health still matters),
+   the timer, stage and kill counters, the skill/tome trays and the perf box.
+
+   Zeroing --xp-h rather than hiding the bar alone is the point: the life panel and the
+   upper-right cluster are both positioned at `top: var(--xp-h)`, so setting it to 0 reflows
+   them flush to the screen edge instead of leaving an 18px gap where the bar used to be. */
+#hud.sandboxHud { --xp-h: 0px; }
+#hud.sandboxHud .xpTop { display: none; }
+#hud.sandboxHud .hudPanel.hudRunTotals { display: none; }
+
+/* ---- Now Playing flash -------------------------------------------------------------------
+   Bottom-right, no panel or backing of any kind — just the two lines of type. Total cycle is
+   4.56s: 0.5s in, 3.25s held, 0.81s out. Those three durations are expressed as keyframe
+   percentages of the total, so changing one duration means recomputing the stops. */
+.nowPlaying {
+  /* Steps up by exactly the toast stack's height when one is showing, and settles back when
+     it clears — ui.js keeps --toast-h current. The transition is what makes it read as
+     yielding space rather than teleporting. 0 is the default, so with no toasts on screen
+     this is the plain corner offset it always was. */
+  position: fixed; right: 34px; bottom: calc(30px + var(--toast-h, 0px)); z-index: 40;
+  transition: bottom 0.25s ease;
+  /* Right-aligned so both lines end flush against the screen edge the panel is anchored to.
+     Left-aligning them made the ragged edge fall on the outside, away from the anchor. */
+  pointer-events: none; text-align: right; opacity: 0;
+}
+.nowPlaying.playing { animation: npCycle 4.56s linear 1 both; }
+@keyframes npCycle {
+  0%      { opacity: 0; }
+  10.96%  { opacity: 1; }   /* 0.50s — faded in  */
+  82.24%  { opacity: 1; }   /* +3.25s — held     */
+  100%    { opacity: 0; }   /* +0.81s — faded out */
+}
+.npHeader {
+  font-family: 'Press Start 2P', 'Pixelify Sans', monospace;
+  font-size: 13px; letter-spacing: 1px; color: #ffffff;
+  text-shadow: 2px 2px 0 rgba(0,0,0,0.85);
+  margin-bottom: 7px;
+}
+/* Pixelify rather than Press Start 2P for the title: at this size the latter is so wide that
+   a normal track name would run off the screen. */
+.npTitle {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700;
+  font-size: 42px; line-height: 1; color: var(--gold-bright);
+  text-shadow: 3px 3px 0 rgba(0,0,0,0.85);
+  max-width: 46vw; overflow-wrap: break-word;
+}
+
+/* The charcoal palette and red chrome that were trialled here now live in :root and in the
+   shared .overlayInner rule, so the main menu no longer overrides either — it just inherits
+   the game-wide theme. Only genuinely main-menu-specific layout remains below. */
+
+/* Triple red keyline around the whole window, matching the panels. Drawn on a pseudo-element
+   so it sits over the menu backdrop without disturbing #mainMenu's own background, and
+   pointer-events:none so it can never eat a click. Same 13/16/19px insets as the panels. */
+#mainMenu::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62)),
+    linear-gradient(rgba(209,90,77,0.62), rgba(209,90,77,0.62));
+  background-position:
+    13px 13px, left 13px bottom 13px, 13px 13px, right 13px top 13px,
+    16px 16px, left 16px bottom 16px, 16px 16px, right 16px top 16px,
+    19px 19px, left 19px bottom 19px, 19px 19px, right 19px top 19px;
+  background-size:
+    calc(100% - 26px) 1px, calc(100% - 26px) 1px, 1px calc(100% - 26px), 1px calc(100% - 26px),
+    calc(100% - 32px) 1px, calc(100% - 32px) 1px, 1px calc(100% - 32px), 1px calc(100% - 32px),
+    calc(100% - 38px) 1px, calc(100% - 38px) 1px, 1px calc(100% - 38px), 1px calc(100% - 38px);
+  background-repeat: no-repeat;
+}
+
+/* ---- Idle button label -------------------------------------------------------------------
+   The deselected state of every ghost button, game-wide, in one place. Previously this was set
+   twice — once on .ghostBtn and again scoped to the main menu with the hex written out — so the
+   two could drift. This rule is the only thing that colours an idle button.
+
+   Hover/focus deliberately stays gold: with idle red and the primary button gold, gold is what
+   says "this is the one you're on", and a second red would blur that. */
+.ghostBtn { color: var(--btn-idle); }
+.ghostBtn:hover, .ghostBtn.gpFocused { color: var(--gold-bright); }
+
+/* ---- Achievements --------------------------------------------------------------------------
+   One card per track. The running total is the headline because it is the number that actually
+   ticks while you play; the bar measures the CURRENT rung only, since the tiers are decades
+   apart and a bar against the last one would read as empty for most of a climb. */
+.achieveRow {
+  background: var(--panel-lo); border: 2px solid var(--iron);
+  box-shadow: inset 2px 2px 0 rgba(120,120,132,0.25), inset -2px -2px 0 rgba(0,0,0,0.45);
+  padding: 14px 16px; margin-bottom: 12px; text-align: left;
+}
+.achieveRow.complete { border-color: var(--gold); }
+.achieveHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.achieveName {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 20px;
+  color: var(--gold-bright);
+}
+/* Pixel face for the tally. Cinzel's serifs made a running count look like an engraved plaque;
+   these are live numbers that tick during play, so they match the rest of the readouts. Sized up
+   a step because Pixelify's caps sit shorter than Cinzel's at the same px. */
+.achieveCount {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 30px; color: #f2f0ec;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.7); margin: 6px 0 8px;
+}
+.achieveDesc {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 15px; color: var(--bone-dim);
+  margin: 9px 0 0;
+}
+.achieveTrack {
+  height: 12px; background: rgba(0,0,0,0.55);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.6);
+}
+.achieveFill {
+  height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold-bright));
+  transition: width 0.3s ease;
+}
+/* Which rung of the climb this is. Small and quiet — it is context for the number above it,
+   not a headline. */
+.achieveBadge {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 15px;
+  color: var(--bone-dim); white-space: nowrap;
+}
+.achieveRow.complete .achieveBadge { color: var(--gold-bright); }
+/* The target the count is measured against, set back from the count so the running total still
+   reads as the number that matters. */
+.achieveTarget { color: var(--bone-dim); font-size: 21px; }
+
+/* The difficulty curve chart, above the sliders that shape it. Full width of the panel — the
+   whole value is watching the shape move while dragging, and a small chart cannot show a
+   1x-to-14x span with three of the four series still legible. */
+.curveChartWrap { grid-column: 1 / -1; margin-bottom: 10px; }
+.curveChart {
+  width: 100%; height: auto; display: block;
+  border: 1px solid var(--iron); border-radius: 3px; background: #100d14;
+}
+/* The legend is not optional even with the lines directly labelled: series cross, and which
+   line is which should never rest on colour alone. */
+/* Names each tome chart now that there are two of them. Without it the second frame reads as a
+   stray graph rather than the counting half of a deliberate split. Sits above the legend and is
+   deliberately quieter than a section heading — it labels a picture, it does not open a section. */
+.curveSubTitle {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 13px; letter-spacing: 0.04em;
+  color: var(--gold-bright); padding: 10px 2px 0; opacity: 0.85;
+}
+.curveLegend {
+  display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 2px 0;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 13px; color: var(--bone-dim);
+}
+.curveLegendItem { display: inline-flex; align-items: center; gap: 6px; }
+.curveLegendItem i { width: 11px; height: 3px; border-radius: 1px; display: inline-block; }
+/* Always-on readout of the last built stage, under the legend. Same swatch treatment as the
+   legend so the two read as one strip rather than two competing keys. */
+.curveReadout {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 8px 3px 0;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 17px; color: var(--bone);
+}
+.curveReadLabel { color: var(--gold-bright); }
+.curveReadItem { display: inline-flex; align-items: center; gap: 6px; }
+.curveReadItem i { width: 11px; height: 3px; border-radius: 1px; display: inline-block; }
+
+/* Dev Tools carries far more than any other overlay — cheats plus three panels of sliders —
+   and at the shared overlay size its labels and numbers were small enough to squint at.
+   That used to be solved with `zoom: 1.3`, which worked but put every border and bevel in the
+   panel on a fractional device pixel — 2px of pixel-art bevel rendered as 2.6, permanently
+   soft, and no amount of matching the main menu's values could fix it from inside a scaled
+   box. The panel's own px sizes are scaled by that same 1.3 instead, rounded to whole pixels,
+   so it is the same size it was and crisp at last.
+   Bounds are now simply the shared ones — no pre-division to undo a multiply. */
+#devMenu .overlayInner {
+  width: 94%;
+  max-height: 90vh;
+}
+
+/* Sandbox stage launchers. Gold-edged so they read as "this starts something" against the
+   plain picker directly above, which only dresses the set. */
+.sandboxPlayStage { border-color: var(--gold) !important; }
+.sandboxPlayStage .settingOptionLabel { color: var(--gold-bright); }
+
+/* ---- Music player: transport row ----------------------------------------------------------
+   Previous / play-pause / next, grouped under the mode buttons.
+
+   Deliberately chromeless: no panel, no border, no inset bevel — just the glyph floating on the
+   menu. Everything else on this screen is a plate you choose ONCE (a track, a mode); these are
+   pressed over and over, and giving them the same weight as the settings above would bury the
+   distinction. Their state is carried entirely by colour. */
+#musicTransport {
+  display: flex; justify-content: center; align-items: center; gap: 30px;
+  margin-top: 14px;
+}
+.transportBtn {
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;   /* beats the global .ghostBtn-style inset bevel */
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700;
+  font-size: 26px; line-height: 1;
+  color: var(--bone);
+  /* No transition on colour: the press state has to land on the same frame as the click, and a
+     fade makes a repeated tap feel like it did not register. */
+  text-shadow: 2px 2px 0 rgba(0,0,0,0.7);
+}
+/* Hovered, held, or on the controller — all the same "you are acting on this" red. */
+.transportBtn:hover,
+.transportBtn:active,
+.transportBtn.gpFocused { color: var(--chrome-lit); }
+
+/* ---- Music player: the active playback mode ----------------------------------------------
+   Shuffle / Loop / Default are a three-way choice, and until now the chosen one looked exactly
+   like the other two — .active was set on the button but nothing styled it, so the panel never
+   said which mode you were in. The current one now burns red.
+
+   The colour has to be set on the inner divs, not the button: .settingOptionLabel and
+   .settingOptionDesc each declare their own bone colour, so a `color` on .ghostBtn is overridden
+   before it reaches the text.
+
+   One of the three is ALWAYS lit, including Default — that is the resting state, not the
+   absence of one, and leaving all three dark would read as "no mode selected". */
+#musicModes .ghostBtn.active .settingOptionLabel { color: var(--chrome-lit); }
+/* Dimmed rather than a second hex, so the label/subtext hierarchy survives the colour change
+   and there is only one red to keep in step. */
+#musicModes .ghostBtn.active .settingOptionDesc { color: var(--chrome-lit); opacity: 0.7; }
+/* Hover and controller focus still win — gold is what says "this is the one you're on", and the
+   active mode must not look focused just because it is selected. */
+#musicModes .ghostBtn:hover .settingOptionLabel,
+#musicModes .ghostBtn.gpFocused .settingOptionLabel,
+#musicModes .ghostBtn:hover .settingOptionDesc,
+#musicModes .ghostBtn.gpFocused .settingOptionDesc { color: var(--gold-bright); opacity: 1; }
+
+/* Version tag tucks inside the window keyline rather than floating in the screen corner.
+   26px = the outermost stroke's 13px inset plus 13px of breathing room, so it reads as sitting
+   within the frame instead of straddling it. Scoped to the main menu, which is the only place
+   the window frame is drawn. */
+#mainMenu .buildTag { right: 26px; bottom: 26px; }
+/* The studio stamp takes the matching left corner. `right: auto` is required, not tidiness:
+   it inherits the rule above, and an element with both left and right set would be stretched
+   between them rather than sitting at the left. */
+#mainMenu .studioTag { left: 26px; right: auto; bottom: 26px; }
+
+/* Version tag in the pixel face, matching the NOW PLAYING label's treatment. Sized down from
+   12px because Press Start 2P is far wider per glyph than Cinzel and letter-spacing is dropped
+   for the same reason. */
+#mainMenu .buildTag {
+  font-family: 'Press Start 2P', 'Pixelify Sans', monospace;
+  font-size: 9px; letter-spacing: 0; font-weight: 400;
+  /* Red like the rest of the chrome. The base rule already dims it via opacity, so it reads
+     as a quiet corner stamp rather than competing with the menu. */
+  color: var(--chrome-lit);
+}
+
+/* End-screen headline states. Defined here rather than as inline styles in ui.js so the two
+   outcomes track the palette like everything else.
+
+   Defeat takes the chrome red — the same family as the keylines, subheads and idle buttons —
+   rather than the old #a13328 brick, which read as a muddier, unrelated red next to them.
+   Victory keeps gold, which in this palette now means "active / reward / you did the thing",
+   so the two outcomes stay unmistakably different at a glance.
+
+   The glow is restated per state because .gameTitle's base shadow is a gold halo; left alone
+   it haloed the red headline in gold. !important matches the pixel-title rule it overrides. */
+/* Gothic gradient headlines — ONE rule for every screen title in the game.
+   .sectionTitle covers Paused, Level Up, Sandbox, Dev Tools, Settings, Unlocks, Leaderboard,
+   Upgrade Shop, Choose Your Class and the confirm dialog; .gameTitle is the end screen. Listing
+   screens individually meant each new one had to be remembered — and Dev Tools was already
+   missed once. Anything using either class is now styled by default.
+
+   The treatment matches the main title plate: Pirata One, a vertical light -> mid -> dark
+   gradient, and a hard offset shadow. Stops match renderTitleArt() exactly.
+
+   The gradient is a background CLIPPED to the glyphs, which means the text fill has to be
+   transparent — and that rules out text-shadow, because a shadow drawn from the glyph outlines
+   shows straight through the hollow letters. filter: drop-shadow operates on the composited
+   result instead, giving the same hard blocky offset without bleeding into the fill. */
+.sectionTitle, .gameTitle {
+  font-family: 'Pirata One', 'Cinzel', serif !important;
+  letter-spacing: 0.03em !important;
+  /* Pirata One is a condensed gothic and reads smaller than the pixel face at a given size,
+     so both headings are scaled up to keep their previous visual weight. */
+  font-size: 58px !important;
+  line-height: 1.1 !important;
+  /* Ramp mirrors renderTitleArt() in main.js so the canvas VOIDFALL plate and these DOM
+     headings are one family. The mid tone is --chrome-lit; main.js duplicates it as inkMid
+     because a canvas cannot read a CSS variable. Change one, change the other. */
+  background-image: linear-gradient(180deg, #f0b0a0 0%, var(--chrome-lit) 52%, #8a2118 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent !important;
+  text-shadow: none !important;
+  filter: drop-shadow(3px 3px 0 #000);
+}
+/* "Paused" is a single short word on an otherwise busy overlay, so it carries a larger size
+   than the others. The end-screen title cannot follow it up — "You Have Fallen" is long enough
+   to wrap at this size — which is why the scale is set per screen rather than shared. */
+#pauseMenu .sectionTitle { font-size: 78px !important; }
+
+/* End-screen title up 40% (34 -> 48). Set on #endTitle rather than .gameTitle so it is the
+   end screen that grows, and Victory grows with it — they are the same element and would
+   look mismatched otherwise. Still short of the Paused size, which "You Have Fallen" wraps at. */
+#endTitle.gameTitle { font-size: 48px !important; }
+
+/* Victory keeps gold, same treatment — the gold stops from the original title gradient. */
+#endTitle.endVictory {
+  background-image: linear-gradient(180deg, #f7e79c 0%, #e6c14e 52%, #a8842f 100%);
+}
+
+/* Gold buttons: type sits in the menu's own charcoal at rest and turns red on hover, so the
+   colour shift is the hover feedback rather than a permanent state.
+
+   Both use the DARK end of their range. On a gold fill the bright red (#c9382e) sits too close
+   in luminance and vibrates; #8a2118 holds ~3.8:1, and the charcoal ~6:1, so both stay crisp
+   at the button's size. gpFocused is included alongside :hover throughout this stylesheet so
+   controller focus gets the same feedback as a mouse. */
+.primaryBtn { color: var(--panel-hi); transition: color 0.15s, transform 0.15s; }
+.primaryBtn:hover, .primaryBtn.gpFocused {
+  color: var(--chrome-dim);
+  /* Detached red stroke. outline (not border) so it is drawn OUTSIDE the box and cannot
+     reflow the button or shift the column on hover, and outline-offset gives the gap between
+     stroke and edge. The bright chrome red is right here — unlike the type, the stroke sits on
+     the dark panel rather than on the gold, so it wants to be vivid, not deep. */
+  /* !important is required, not decorative: the global focus ring at "Crisp, hard focus ring"
+     above is itself `!important`, so without it gamepad focus on a gold button still drew the
+     old 3px gold ring at zero offset. */
+  outline: 2px solid var(--chrome) !important;
+  outline-offset: 3px !important;
+}
+/* .grantBtn only fills gold on hover, so its red type belongs in that same state. */
+.grantBtn:hover, .grantBtn.gpFocused { color: var(--chrome-dim); }
+
+/* Screen headings run red. "Choose Your Class" shares .sectionTitle with every other menu
+   heading — Sandbox, Unlocks, Leaderboard, Upgrade Shop, Level Up, Paused, Settings, Dev Tools
+   and the confirm dialog — so this moves all of them rather than leaving one red title sitting
+   among gold ones.
+
+   Uses the bright chrome red: these sit on the dark panel, same as the keylines, and the
+   deep red reserved for gold fills would go muddy here. That leaves gold meaning strictly
+   "currency and primary action", which is a cleaner split than it having also owned titles. */
+
+/* ---- Class card layout: stabilised -----------------------------------------------------
+   The cards were already equal boxes (measured 278x818 across all six); the ragged look came
+   entirely from the stat block. As a flow-wrapped flex row it packed greedily, so a class with
+   two-digit values fitted onto 2 lines while three-digit ones needed 3 — which moved the
+   "Starting Gem" divider anywhere between 701px and 765px down the card.
+
+   Now it is a grid: one stat per row, always three rows, with fixed icon and value columns so
+   the glyphs and numbers align vertically both within a card and across all of them. Digit
+   count can no longer influence layout at all. */
+.classCardStats {
+  display: grid; grid-template-columns: 1fr; gap: 4px;
+  flex-wrap: nowrap;
+}
+.classCardStats .statRow {
+  display: grid;
+  /* Value column is sized for three digits so 98 and 180 occupy the same slot. */
+  grid-template-columns: 1.5em 2.4em 1fr;
+  align-items: baseline; gap: 6px;
+}
+.classCardStats .statIcon { text-align: center; }
+.classCardStats .statVal { text-align: right; color: var(--bone); font-weight: 700; }
+.classCardStats .statLbl { color: var(--bone-dim); }
+
+/* The description shows IN FULL — with the class passives written into every desc, clipping
+   became hiding the one line that says what makes a class special. Alignment across cards is
+   kept a different way now: the description grows freely in the middle, and the stats block
+   below anchors to the card BOTTOM (margin-top:auto, same trick the gem line already used).
+   Cards stretch to the tallest of the row, so the bottom group lands on one line everywhere
+   and the only thing that varies is empty space under a short description. */
+.classCardDesc {
+  height: auto;
+  min-height: 6em !important;   /* short descs still hold the old four-line rhythm */
+  overflow: visible;
+  margin-bottom: 12px !important;
+}
+.classCardStats { margin-top: auto; }
+
+/* Shorter windows get compact type instead of clipped text: at the full 23px description a
+   passive-bearing card runs ~920px tall, which fits a fullscreen 1269px panel and does NOT
+   fit a ~900px window. Em-reserved heights shrink along with the fonts. The viewport also
+   allows vertical scroll as the last-resort safety: on anything reasonable it never engages,
+   on a tiny window it beats hiding the stats. */
+/* On a short window the card outgrows the panel's max-height and the STATS fall off the bottom.
+   The description is now the tallest element and must not be cut, so the space comes from the
+   portrait instead: capping it frees well over the ~1 row that was overflowing, and a slightly
+   shorter character portrait costs the player nothing they were reading. Type steps down with
+   it so the whole card scales rather than just cropping the picture. */
+@media (max-height: 1050px) {
+  .classCardDesc { font-size: 17px !important; line-height: 1.4 !important; }
+  .classCardName { font-size: 24px !important; }
+  .classCardTag  { font-size: 14px !important; }
+  .classPortrait { max-height: 200px; }
+  .classCard { padding: 14px; }
+  /* The gem row reserves two lines, but at this breakpoint a wrapping name ("quickshot",
+     "ninjastars") needs three — the clamp was cutting the second line in half. Room for three
+     costs nothing: the row is bottom-pinned, so short names just leave space above. */
+  .classCardSkill { height: calc(3.9em + 8px) !important; -webkit-line-clamp: 3 !important; }
+}
+.classViewport { overflow-y: auto; }
+/* The shared .overlayInner hides overflow under a max-height, which on short windows was
+   swallowing the bottom of the cards. THIS panel scrolls instead — nothing on a class card is
+   optional reading. Scoped to class select so other overlays keep their crop. */
+#classSelect .overlayInner { overflow-y: auto; }
+
+/* Cards sized so three fit the viewport whole instead of clipping the third mid-word, and
+   snapping so the carousel always comes to rest on a card boundary. */
+.classCard { flex: 0 0 270px !important; scroll-snap-align: start; }
+.classViewport { scroll-snap-type: x mandatory; }
+
+/* Header height was the remaining source of drift: name and tag each wrap to one or two lines
+   depending on the class ("Ranger"/"SWIFT MARKSMAN" fit on one apiece, "Plague Doctor" needs
+   two of each), so the header measured anywhere from 64px to 128px and shifted every element
+   below it by up to 45px.
+
+   Both now reserve exactly two lines whether they use them or not, so the header is a constant
+   height and short names simply leave space. Heights are in each element's OWN em, so this
+   holds at both font-size breakpoints without being restated. */
+.classCardHeader { align-items: flex-start; }
+
+/* Name and tag are each sized to fit their LONGEST entry on a single line, measured against
+   the 206px text column: "Plague Doctor" fits at 29px, "Harvester of the Sick" at 16px.
+
+   Reserving two lines apiece (the previous attempt) made the header a constant height but left
+   a dead line under every short name, which pushed the coloured tag to a different place on
+   each card. One line each is both tighter and genuinely uniform — the header is now exactly
+   name + tag on every class, with nothing to wrap.
+
+   nowrap + ellipsis is the safety net: add a class whose name outgrows the column and it will
+   visibly truncate, which is an obvious prompt to drop the size, rather than silently wrapping
+   and knocking every card below it out of alignment again. */
+.classCardName, .classCardTag { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.classCardName { font-size: 29px !important; line-height: 1.2; }
+.classCardTag  { font-size: 16px !important; line-height: 1.35; }
+
+/* The last 12.5px of drift came from an easy-to-miss default: .classCard is a <button>, and a
+   button CENTRES its content vertically. Cards are stretched to equal height, so any card whose
+   content was shorter had the slack split above and below it — pushing the portrait itself down.
+   The remaining variable was the gem line, which wraps to two lines for longer names
+   ("quickshot") and one for short ("slash").
+
+   Making the card an explicit top-aligned flex column removes the centring, and pinning the gem
+   row to the bottom with margin-top:auto means it lands on the same line on every card no
+   matter what sits above it. */
+.classCard { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; }
+.classCardSkill {
+  margin-top: auto;
+  line-height: 1.3;
+  /* Two lines reserved so the rule above it holds its height whether the gem name wraps. */
+  height: calc(2.6em + 8px);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+
+/* The hover lift (translateY(-4px)) was being clipped by the viewport, which has to be
+   overflow:hidden vertically because it scrolls horizontally — a box cannot be visible on one
+   axis and auto on the other. Padding inside the scroller gives the raised card room to move
+   without letting the cards themselves overflow. */
+.classList { padding: 8px 0; }
+
+/* Input hints ("Click to select", the pause and confirm prompts) read red with the rest of the
+   type. They keep a smaller size, so hierarchy still comes from scale rather than colour. */
+.inputHint { color: var(--chrome-lit); }
+
+/* .inputHint carries margin-top:-18px because on every other screen it sits directly under a
+   title and needs pulling up toward it. In the confirm dialog it is the LAST element, below the
+   buttons, so that negative pull dragged it 18px into them. Positive clearance here instead. */
+#confirmDialog .inputHint { margin-top: 18px; }
+
+/* ---- HUD layout: vitals top-left, perf readout bottom-left ---------------------------------
+   Swapped back: life and armour return to the corner nearest the eye, and the temporary perf
+   box takes the lower-left corner they vacated.
+
+   The vitals now live INSIDE #hudTopLeft rather than being anchored by hand, so the relic and
+   item strips flow underneath them the way they already flowed under the perf box. That is why
+   this drops to `position: static` — .hudPanel's base rule is absolute, and leaving it that way
+   would take the bars out of the column and stack them on top of the relics.
+
+   These override the older .hudVitals/.hudCenter rules above (including their two breakpoint
+   blocks) rather than editing them in place, so the earlier sizing still applies and only the
+   anchoring changes. */
+#hud .hudPanel.hudVitals {
+  position: absolute;
+  top: var(--xp-h); right: 0; bottom: auto; left: auto;
+  border-top-right-radius: 0; border-right-width: 0; border-top-width: 0;
+  width: 300px;
+}
+/* Time / stage / kills stay centred at the top, as before — only the vitals moved. This block
+   is kept (rather than deleted) so the anchoring is stated in the same place as the vitals
+   override, instead of being an invisible inheritance from far up the file. */
+#hud .hudCenter {
+  top: var(--xp-h); left: 50%; transform: translateX(-50%); text-align: center; padding: 6px 0 0;
+}
+
+/* Armor reads blue-grey against life's red — cold plate versus blood, readable apart at a
+   glance even in peripheral vision. */
+.armorBar .barFill { background: var(--steel) !important; box-shadow: none !important; }
+.hudVitals .armorBar { margin-top: 8px; }
+
+/* ---- Vitals rows: label outside, readout inside ---------------------------------------
+   Both bars are one flex row each - name on the left, value centred in the track - so the
+   panel is two lines tall instead of four. The label column is a fixed width rather than
+   auto, because "Health" and "Armor" are different lengths and an auto column would start
+   the two bars at different x positions, which reads as a misalignment. */
+.vitalRow { display: flex; align-items: center; }
+.vitalRow + .vitalRow { margin-top: 7px; }
+.vitalRow .bar { flex: 1 1 auto; }
+
+/* No panel behind the vitals: the bars ARE the readout. Everything the .hudPanel base rule
+   contributes - dithered fill, iron border, bevel, drop shadow, padding - is unwound here
+   rather than by dropping the class, because .hudPanel also carries the absolute positioning
+   the bottom-left anchor depends on. The bars keep a small inset off the screen edges; flush
+   into the corner only read as deliberate while there was a panel edge to justify it. */
+#hud .hudPanel.hudVitals {
+  background: none !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  /* Inset follows the corner the bars live in: under the XP strip and off the RIGHT edge. */
+  padding: 10px 16px 0 0;
+}
+/* Tall enough to hold its own text. The bars were sized for a bare track when the numbers
+   lived underneath them. One size, no breakpoint: the vitals panel itself is a fixed 440px
+   at every width (see the "LIFE stats box doubled" block above), so a responsive bar height
+   here would only have made the text fit at some widths and not others. */
+.hudVitals .bar { height: 30px; }
+.barText {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 20px; font-weight: 700; letter-spacing: 0.03em;
+  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+  pointer-events: none;
+}
+/* The armour row no longer needs its own top margin - .vitalRow + .vitalRow supplies it. */
+.hudVitals .armorBar { margin-top: 0; }
+
+@media (min-width: 1500px) { #hud .hudPanel.hudVitals { width: 440px; } }
+
+/* The top-left column: vitals, then relics and items beneath them. `--xp-h` clears the XP bar,
+   and everything inside flows normally so nothing has to know how tall anything else is —
+   which is the whole reason the vitals were put in the column rather than anchored separately. */
+#hud .hudTopLeft {
+  position: absolute; top: var(--xp-h); left: 0; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-start;
+  pointer-events: none;
+}
+/* Perf readout takes the bottom-left corner the vitals vacated. It anchors itself now that it
+   is no longer a child of the top-left column. TEMPORARY, like the box itself — tagged for
+   deletion in markup, CSS and JS together. */
+#hud #perfBox {
+  position: absolute; bottom: 0; left: 0; z-index: 6;
+  align-self: auto;
+  border-left-width: 0; border-bottom-width: 0;
+}
+
+/* The rule that used to lift the toasts clear of the vitals panel is gone with them: they now
+   live in the opposite corner from the life and armor bars, so there is nothing to avoid. */
+
+/* The dodge chip in the skill tray. Borrows the gem's frame and cooldown fill wholesale; only
+   the glyph is its own, since the dash has no gem art of its own to show. */
+.dashChip .dashGlyph {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 26px;
+  color: var(--bone); line-height: 1;
+}
+
+/* ---------- Sample tuning: waveform + scrubber ---------- */
+/* The waveform is the readout for these dials — "trim start 0.16s" is meaningless until you can
+   see that the first 0.16s is silence — so it gets the width and sits directly under the box's
+   sliders rather than off to one side. */
+.sampleWrap { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sampleWave {
+  width: 100%; height: 109px; display: block;
+  border: 1px solid #3a352e; border-radius: 3px;
+  cursor: crosshair;
+}
+/* Layout only. The gold plate, the 2px bevel, the square corners and the pixel font all come
+   from the shared button rules above, so this key is the same material as the main menu's —
+   restating those values here is how a second, almost-matching style gets born. */
+.samplePlay {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 17px; letter-spacing: .04em; padding: 6px 18px;
+  color: #1a1207; cursor: pointer;
+}
+.samplePlayIcon { font-size: 10px; line-height: 1; }
+
+/* ---------- Dev Tools: icon grid navigation ---------- */
+/* Sections are pages now, reached from a grid rather than by scrolling past each other. The grid
+   stays put while the page below it scrolls, so the way back is always on screen. */
+.devIconGrid {
+  position: sticky; top: 0; z-index: 3;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(101px, 1fr));
+  gap: 6px; padding: 8px 2px 8px;
+  /* SOLID, and the panel's own colour. It was a gradient fading to transparent in #151310 —
+     from before the frame went dark — so scrolled content showed through the fade as a murky
+     band under the tabs, and the leftover brown tint did not match the new #151517 frame.
+     A sticky bar has to fully hide what passes beneath it. */
+  background: var(--panel-lo);
+  border-bottom: 1px solid var(--iron); margin-bottom: 8px;
+}
+/* Off-black keys in the game's own button material: the .ghostBtn bevel at rest, the
+   .primaryBtn gold plate on hover and on the selected page. Both come from the shared rules
+   above; only layout and the colour swap live here. */
+.devIcon {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 5px; cursor: pointer;
+  background: var(--panel-lo); border: 2px solid var(--iron);
+  color: var(--bone-dim); font-family: inherit;
+  transition: color .1s;
+}
+.devIcon:hover, .devIcon.on { color: #1a1207; }
+/* The selected page keeps the gold rather than only previewing it on hover — hover is a
+   pointer-only signal, and this grid is navigable by controller too. */
+.devIconGlyph { font-size: 26px; line-height: 1; }
+.devIconLabel { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+
+/* Only the selected page renders. display:none rather than visibility, so hidden pages cost no
+   layout — with every section live the panel was several thousand pixels tall. */
+.devPage { display: none; }
+.devPage.on { display: block; }
+/* A host whose children were moved into pages. It stays in the DOM for the next rebuild to
+   write into, but must not take up space while empty. */
+.devHostEmptied { display: none; }
+
+/* Classes: two columns of three. Six boxes of the same six stats are meant to be read against
+   each other, and one tall column puts Warrior off-screen by the time you reach Sorceress. */
+/* Must carry .on as well: a bare .devPageTwoCol{display:grid} sits later in this file than
+   .devPage{display:none} at equal specificity, so it won — and the classes page stayed visible
+   underneath whichever page was actually selected. */
+.devPage.devPageTwoCol.on { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; align-items: start; }
+/* The section's own blurb spans both columns rather than sitting in the first one. */
+.devPageTwoCol > .devHint { grid-column: 1 / -1; }
+@media (max-width: 900px) { .devPage.devPageTwoCol.on { grid-template-columns: 1fr; } }
+
+/* Drops. Two columns, and the SOURCE ORDER does the placing: each gold chart sits directly
+   above the curve box that shapes it, then gold takes the left column across two rows while
+   health potions and the chest/key rates stack down the right.
+
+   `align-items: stretch` is what keeps the edges honest. With `start`, every box was its own
+   height and the right-hand stack ended 24px short of the tall Gold box beside it, with a 34px
+   gap between its two halves against the grid's 10px — a column of ragged, arbitrary edges.
+   Stretching makes each box fill its grid row, so the two columns end level. */
+.devPage.devPageDrops.on {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Tighter row gap than the other grids: this page carries the most rows, and the last 25px
+     of overflow is the difference between one view and a scroll. */
+  gap: 6px 14px; align-items: stretch;
+}
+/* Slightly tighter boxes here for the same reason; the dials keep their spacing, the frame
+   just stops padding them so generously. */
+.devPageDrops .tuneBox { padding: 8px 16px; }
+.devPage.devPageDrops.on > .devHint,
+.devPage.devPageDrops.on > .curveReadout { grid-column: 1 / -1; }
+/* The charts sit one per column rather than spanning. Stacked full-width they were 521px of
+   the page between them, which is most of the reason it did not fit. */
+.devPage.devPageDrops.on > .curveChartWrap { grid-column: auto; }
+/* Reclaimed from the chrome around the content — a one-line blurb, tighter readout and legend
+   padding, and slimmer boxes — and spent on the charts, which are the reason to be on this page
+   at all. They were 108px and hard to read a shape from. */
+.devPageDrops .curveChart.goldChart { height: 168px; }
+/* Explicit heights, for the same reason goldChart has one: `height: auto` on a canvas derives
+   from its width/height ATTRIBUTES, which fitCanvas then overwrites from the measured box — the
+   two chase each other and settle wherever they like. Pinning the CSS height gives fitCanvas a
+   fixed target.
+   Scoped to the page rather than written bare, because `.devPageThreeCol .curveChart` sets 300px
+   further down this file: a bare `.curveChart.tomeCountChart` ties it on specificity and loses on
+   order, which is exactly what happened — the counting chart kept rendering at the full 300.
+   It gets less room on purpose: one series against the proportions chart's seven. */
+.devPageThreeCol .curveChart.tomeCountChart { height: 150px; }
+.devPageDrops .curveChartWrap { margin-bottom: 4px; }
+.devPageDrops .curveLegend { padding-top: 2px; }
+/* The readouts sit right under their chart; 8px of lead-in was reading as a gap between two
+   unrelated things rather than a caption belonging to the picture above it. */
+.devPageDrops .curveReadout { padding-top: 3px; }
+/* Gold holds the left column across both of the rows the two short boxes occupy. */
+.devPage.devPageDrops.on > .devBoxPrimary { grid-column: 1; grid-row: span 2; }
+@media (max-width: 900px) {
+  .devPage.devPageDrops.on { grid-template-columns: 1fr; }
+  .devPage.devPageDrops.on > .devBoxPrimary { grid-column: 1; grid-row: auto; }
+  .devPage.devPageDrops.on > .curveChartWrap { grid-column: 1 / -1; }
+}
+
+/* The gold chart matches its backing store to its rendered width for crispness, which means it
+   must NOT inherit .curveChart's height:auto — with the intrinsic width changing on every
+   redraw, an auto height follows the new aspect ratio and the canvas grows without bound. */
+.curveChart.goldChart { height: 195px; }
+
+/* ---------- Collapsible skill panels ---------- */
+/* The skill list is back to one column, so each panel folds away to its name. Collapsed is the
+   default: what you almost always want on this page is to find one skill, and fifteen open
+   panels bury the names you are scanning for. */
+/* Folded on the BOX, not the list: a sample panel also carries a waveform and an audition
+   button, and hiding only the stat list would strand those under a shut header. */
+.tuneBox.collapsed .tuneList,
+.tuneBox.collapsed .sampleWrap { display: none; }
+/* The name IS the toggle. It was a span; as a button it needs the surrounding text styling back
+   rather than the browser's. */
+.tuneName.tuneCollapse {
+  flex: 1; display: flex; align-items: center; gap: 6px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+}
+.tuneName.tuneCollapse:hover { color: var(--gold-bright); }
+.tuneCaret { display: inline-block; transition: transform .12s; font-size: 0.8em; opacity: 0.7; }
+.tuneCollapse[aria-expanded="true"] .tuneCaret { transform: rotate(90deg); }
+
+/* Stat labels read left-aligned: a column of ragged-right labels is far easier to scan down
+   than one centred or right-aligned, and these are lists you read vertically. */
+.tuneLine label, .tuneLabel { text-align: left; }
+
+/* ---------- Skill damage projection ---------- */
+/* Sits at the top of an expanded skill, above its sliders, so the effect of a change is read
+   in the same glance as the change itself. */
+.dmgProjection {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;
+  padding: 6px 8px; margin-bottom: 8px;
+  background: #17140f; border-left: 2px solid var(--accent, #7a6f5f); border-radius: 2px;
+}
+.dmgProjLabel { flex: 1 0 100%; font-size: 14px; color: #7d746a; letter-spacing: .02em; }
+.dmgProjCell { display: inline-flex; align-items: baseline; gap: 5px; font-size: 16px; color: #8a8071; }
+.dmgProjCell b { font-family: 'Pixelify Sans', sans-serif; color: #a2977f; font-weight: 400; }
+.dmgProjCell i { font-style: normal; font-weight: 700; color: var(--bone, #e8e2d4); font-size: 13px; }
+.dmgProjCell em { font-style: normal; color: #6f675c; }
+
+/* Horde rush payout table: one row per stage, three checkpoints each. Sits under its chart so
+   the curve and what it is actually worth are read together. */
+.hordeReadout { flex-direction: column; align-items: flex-start; gap: 4px; }
+.hordeRow { display: flex; align-items: baseline; gap: 14px; }
+.hordeRow > i { font-style: normal; color: var(--bone-dim); min-width: 130px; }
+.hordeCell { color: var(--bone); }
+.hordeCell b { color: var(--gold-bright); font-weight: 400; margin-right: 3px; }
+
+/* Sound panel labels in red. The shared --bone-dim sat too close to the panel behind it to read
+   at a glance; --blood-bright is the palette's existing red, so this stays inside the game's
+   colours rather than introducing a new one. Scoped to the sample boxes by class, not by
+   :has(), so it does not depend on selector support and cannot leak to the other tune panels. */
+/* Measured against the panel's actual painted background, rgb(21,21,23): --blood-bright is only
+   2.62:1, well under the 4.5:1 normal-text threshold. This lands at 5.4:1, with margin rather
+   than scraping the line — these are small pixel-font labels, where antialiasing eats into a
+   thin margin. Still a palette red: the panel's own texture already runs from #d15a4d up to a
+   #f0b0a0 highlight, so this sits inside the range the art already uses. */
+/* Shared by the sound and skill panels. One rule rather than two near-identical ones, so the
+   two cannot drift apart the next time either is touched. */
+.tunePanel .tuneLabel,
+.tunePanel .tuneName { color: #e0655a; }
+/* Hover lifts the whole panel's text to the standard gold — the same --gold-bright the rest of
+   the UI uses for "this is the thing you are on", so a sound panel highlights like everything
+   else. 7.5:1 on this background, so the hover state is more legible than the resting one and
+   not less, which is the way round it should be. */
+.tunePanel:hover .tuneLabel,
+.tunePanel:hover .tuneName { color: var(--gold-bright); }
+
+/* Difficulty curve: chart across the top, the four stat boxes 2x2 beneath it, so the curve and
+   the dials that shape it are visible together. Carries .on for the same reason the other
+   multi-column pages do — a bare display:grid beats .devPage{display:none}. */
+.devPage.devPageCurve.on {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px; align-items: start;
+}
+.devPage.devPageCurve.on > .devHint,
+.devPage.devPageCurve.on > .curveChartWrap,
+.devPage.devPageCurve.on > .curveReadout { grid-column: 1 / -1; }
+@media (max-width: 900px) { .devPage.devPageCurve.on { grid-template-columns: 1fr; } }
+
+/* On the curve page the chart shares the view with all four stat boxes, so it takes a fixed
+   height rather than growing with the panel width. At height:auto its 900x260 backing scaled
+   to ~352px and pushed the bottom row off the page — which is exactly what the 2x2 was for. */
+/* Chart heights are set per page from the room each one actually has, measured against the
+   90vh panel cap. The density pass freed 80px on the curve page and 240px on loot quality;
+   both go to the picture, which is the thing you are here to read. Drops keeps 168px — with
+   two charts side by side and five boxes under them it has no spare height. */
+.devPageCurve .curveChart { height: 330px; }
+
+/* A tune box reduced to a strip: full width, one row of dials, chrome cut back to nothing. Used
+   for the health multipliers under the Enemy Stats box, and page-neutral on purpose — the same
+   shape works anywhere a short box would otherwise be given the height of a tall one. */
+.flatStripBox { padding: 2px 12px; }
+.flatStripBox .tuneHead { margin-bottom: 0; }
+.flatStripBox .tuneName { font-size: 14px; }
+.flatStripBox .tuneLine { grid-template-columns: 132px 1fr 78px; }
+/* Three bosses read against each other, so they sit in a row. The label column narrows to pay
+   for it — a name and a multiplier is all each one has to say. */
+.flatStripWide .tuneList {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px;
+}
+.flatStripWide .tuneLine { grid-template-columns: 126px 1fr 58px; }
+/* "Hollow Sovereign" wrapped to two lines and squashed its own slider to a stub while the other
+   two kept full width — three dials meant to be compared were three different sizes. */
+.flatStripWide .tuneLabel { white-space: nowrap; }
+@media (max-width: 900px) {
+  .flatStripWide .tuneList { grid-template-columns: 1fr; }
+}
+.devPageRarity .curveChart { height: 380px; }
+
+/* ---------- Dev Tools density pass ---------- */
+/* These began as Drops-only fixes and proved right everywhere: the chrome around the content
+   was eating more height than the content it framed. Promoted to every page so the panels stay
+   consistent, and so a new section inherits the spacing instead of the old roomier defaults. */
+.devPage .curveChartWrap { margin-bottom: 4px; }
+.devPage .curveLegend { padding-top: 2px; }
+/* A readout belongs to the chart above it. At 8px of lead-in it read as a separate block that
+   happened to sit nearby. */
+.devPage .curveReadout { padding-top: 3px; }
+.devPage .tuneBox { padding: 8px 16px; }
+/* A folded panel is a row in a list — it needs room for its name and nothing else. This is what
+   lets the fifteen skills come closer to fitting one view. */
+.devPage .tuneBox.collapsed { padding-top: 4px; padding-bottom: 4px; }
+.devPage .tuneBox.collapsed .tuneHead { margin-bottom: 0; }
+
+/* Tome chips under the gold counter. Right-aligned to the panel edge and wrapping leftward, so
+   the row grows toward the middle of the screen rather than off it as tomes accumulate. */
+.hudTomeTray {
+  display: flex; flex-wrap: wrap-reverse; justify-content: flex-start;
+  /* max-width doubles with the chips, or a six-tome shelf wraps into a tall stack instead of
+     staying the compact block it is meant to be. */
+  gap: 6px; margin-top: 6px; max-width: 380px;
+}
+/* DOUBLE SIZE. At 28px the sigil that distinguishes one tome from another was a handful of
+   pixels — the chips read as "you have four tomes" but not WHICH four, which is the only
+   question the shelf exists to answer. 56px makes the sigil legible at a glance without the
+   row growing tall enough to compete with the gold counter above it. */
+.hudTomeTray .gemIconSmall {
+  position: relative;
+  width: 56px; height: 56px; font-size: 22px; border-width: 3px;
+}
+/* The level rides in the corner of the chip, as it does on the skill gems — scaled with it so
+   it stays a corner mark rather than becoming a label across the face. */
+.hudTomeTray .gemIconSmall small {
+  position: absolute; right: 3px; bottom: 1px;
+  font-family: 'Pixelify Sans', sans-serif; font-size: 15px; line-height: 1;
+  color: var(--bone); text-shadow: 0 0 2px #000, 0 0 2px #000;
+}
+/* The sigil itself is an inline SVG sized by the chip, so it has to grow with it. */
+.hudTomeTray .gemIconSmall svg { width: 100%; height: 100%; display: block; }
+
+/* Sub-headings inside a dev page. Deliberately NOT .devSectionTitle: that class is what the
+   pagination splits pages on, so using it here would scatter one page across four. */
+.devSubTitle {
+  font-family: 'Pixelify Sans', sans-serif; font-weight: 700; font-size: 15px;
+  color: var(--bone-dim); letter-spacing: .06em; text-transform: uppercase;
+  /* Tight: four of these on the skills page, and every pixel they take is one the panels below
+     lose. A rule and a little air is enough to separate groups — they do not need to shout. */
+  margin: 5px 0 2px; padding-bottom: 1px;
+  border-bottom: 1px solid var(--iron);
+}
+.devSubTitle:first-child { margin-top: 0; }
+
+/* Tomes: nine boxes three-up under their chart. The chart takes a FIXED height for the same
+   reason the gold one does — .curveChart is height:auto, so a 900x220 backing stretched to the
+   panel width came out 1335px tall and pushed everything off the page. */
+.devPage.devPageThreeCol.on {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 12px; align-items: stretch;
+}
+/* Nine boxes of four dials plus a chart is a full page; the frames give up a little padding
+   so the chart does not have to. */
+.devPageThreeCol .tuneBox { padding: 3px 12px; }
+/* The Tomes page trades frame for chart: its rows are four dials of fixed height, so the only
+   height left to give back is the spacing around them. */
+.devPageThreeCol .tuneHead { margin-bottom: 4px; }
+.devPageThreeCol .tuneLine { gap: 6px; }
+.devPage.devPageThreeCol.on > .devHint,
+.devPage.devPageThreeCol.on > .curveChartWrap { grid-column: 1 / -1; }
+.devPageThreeCol .curveChart { height: 300px; }
+@media (max-width: 1100px) { .devPage.devPageThreeCol.on { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* The All Tomes master is a strip, not a grid cell. As a cell it took one of the nine slots the
+   tomes need, so the 3x3 became 3x3-plus-one and Duration fell off the page. Spanning the full
+   width and collapsing to a single row keeps the grid below it exactly nine boxes. */
+.tomeMasterBox {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 14px;
+  padding: 1px 12px;
+}
+.tomeMasterBox .tuneHead { margin-bottom: 0; flex: 0 0 auto; }
+.tomeMasterBox .tuneName { font-size: 15px; }
+.tomeMasterBox .tuneList { flex: 1; min-width: 0; }
+/* One dial, so it gets the whole strip rather than a label column sized for four. */
+.tomeMasterBox .tuneLine { grid-template-columns: 120px 1fr 90px; }
+
+/* ---------- Dev Tools: the frame matches its contents ---------- */
+/* The shared overlay wears a red dithered plate — right for the pause and level-up screens,
+   which are moments in the game. Dev Tools is a workbench: it is dense with panels that are
+   themselves dark, and a bright patterned surface behind them fought every chart and slider on
+   it for attention. Same --panel-lo as the boxes, so the whole thing reads as one instrument.
+   The boxes keep their accent borders and bevel, which is what still separates them from it. */
+#devMenu .overlayInner {
+  background-image: none !important;
+  background-color: var(--panel-lo) !important;
+}
+
+/* ---------- Dev Tools: keep the arena in view ---------- */
+/* Removing the overlay's dark wash was only half of it. The panel is 94% wide and fully opaque,
+   so it covered the field regardless — the game was not dimmed, it was hidden.
+   Docked to the right at 60% instead, leaving a live strip of arena on the left. Half of what
+   this panel tunes is a colour or a shape out there, and a slider you cannot watch is a slider
+   you have to guess at, reload, and check.
+   60% rather than half: the tuning boxes sit three across and dropping below this reflows them
+   to two, which makes the page much longer to scroll for a small gain in view. */
+#devMenu { justify-content: flex-end; }
+#devMenu .overlayInner { width: 60%; margin-right: 2vw; }
+/* Under 1400px there is not enough room for both, so it goes back to full width — a cramped,
+   reflowed panel is worse than not seeing the field. */
+@media (max-width: 1400px) {
+  #devMenu { justify-content: center; }
+  #devMenu .overlayInner { width: 94%; margin-right: auto; }
+}
+
+/* The Cheats page is built from settings rows rather than tune boxes, so it kept the settings
+   screen's lighter plate (rgb(38,38,42)) and its black label text while every other dev page
+   went dark. Same surface and the same red-on-dark labels as the rest of the workbench. */
+#devMenu .settingRow,
+#devMenu .settingOption {
+  background: var(--panel-lo) !important;
+  background-image: none !important;
+}
+#devMenu .settingLabel { color: #e0655a; }
+#devMenu .settingLabelDesc { color: var(--bone-dim); }
+#devMenu .settingRow:hover .settingLabel { color: var(--gold-bright); }
+
+/* Tabs in red rather than gold. Gold is the game's "reward" colour — it belongs on Play Game
+   and on loot, not on a workbench's navigation. The plate is the difficulty chart's red, so the
+   tabs sit in the same palette as the charts they lead to. */
+.devIcon:hover, .devIcon.on {
+  background: #c9382e !important;
+  border-color: #5c1a15 !important;
+  box-shadow: inset 2px 2px 0 rgba(255,200,190,0.45), inset -2px -2px 0 rgba(0,0,0,0.45) !important;
+  color: #1a0806 !important;
+}
+.devIcon.on { background: #d94a3d !important; }
+
+/* The sticky tab bar must reach every edge of the scrollport, or content slides through the
+   gap. #devBody carried 8px top and 6px side padding, so the bar stuck 8px down and 6px in —
+   and the accent borders of the boxes scrolling behind showed as coloured slivers above it and
+   down both sides. The padding moves to the children, leaving nothing for content to show in. */
+#devMenu #devBody { padding: 0 !important; }
+#devMenu .devIconGrid { padding-left: 6px; padding-right: 6px; }
+#devMenu .devPage { padding: 0 6px 8px; }
+
+/* ---------- Relic bar ---------- */
+/* Sits directly under the stats readout, top-left, and deliberately wears the DEV-TOOLS palette
+   rather than the game's gold-on-parchment chrome: near-black panels with a coloured left edge
+   and small pixel type. Relics are a different KIND of thing from tomes and skills — found, not
+   chosen, and unupgradable by any normal route — so they should not look like the rest of the
+   HUD. The darker treatment also keeps four stacked bars from competing with the life and XP
+   bars for attention during a fight.
+   Each relic's own colour drives the edge and the icon via --relicColor, so the strip reads as
+   six distinct things rather than one grey list. */
+/* DOUBLE SIZE. Same reasoning as the tome shelf: at 11px name over 9px description these read
+   as "you have three relics" but not WHICH three, and which one you are holding is the only
+   question the strip exists to answer. Everything doubles together — type, icon, padding, gaps
+   and the row's max width — so the block keeps its proportions instead of becoming big text in
+   a box sized for small text. The 1px hairline borders stay 1px: a 2px border at this scale
+   reads as a frame around each row rather than as a card edge. */
+#hud #relicBar {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 0 0 12px; pointer-events: none;
+}
+.relicRow {
+  display: grid; grid-template-columns: 36px 1fr; align-items: center; column-gap: 12px;
+  background: rgba(21, 21, 23, 0.82);
+  border: 1px solid #2a2a2e;
+  border-left: 6px solid var(--relicColor, #7a56d2);
+  border-radius: 2px;
+  padding: 6px 14px 6px 10px;
+  max-width: 464px;
+}
+.relicIcon {
+  font-size: 28px; line-height: 1; text-align: center;
+  color: var(--relicColor, #7a56d2);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--relicColor, #7a56d2) 60%, transparent);
+}
+.relicText { min-width: 0; }
+/* Name and tier pips on one line. The pips are how the duplicate mechanic stays legible — the
+   whole point of a relic is which COPY you are on, and a number would read as a level. */
+.relicName {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 22px; letter-spacing: 0.02em;
+  color: #e0655a; display: flex; align-items: baseline; gap: 10px;
+}
+.relicPips { color: var(--relicColor, #7a56d2); letter-spacing: 2px; font-size: 20px; }
+.relicDesc {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 18px; line-height: 1.25;
+  color: #8a8a92;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---- Class select: stop cropping the portrait and the gem line ------------------------------
+   Two separate crops, both measured rather than eyeballed.
+
+   THE PORTRAIT. The canvas is authored 160x220 (see ui.js) and the frame was being given the
+   card's full width with `height: auto`, which made the canvas 277px tall inside a 170px box.
+   With `overflow: hidden` and `align-items: flex-end` the surplus came off the TOP — 107px of
+   it — so every character was shown decapitated, framed from the chest down. The max-height cap
+   that a short window applies is what created the mismatch, so raising the cap only moves the
+   problem to a shorter window.
+
+   The frame now carries the ART'S OWN aspect. Constrained by height it narrows instead of
+   cropping, so the whole bust survives at every window size and the only cost is dark margin
+   either side of a narrow portrait — which reads as a frame, because it is one. */
+.classPortrait {
+  aspect-ratio: 160 / 220;
+  height: auto;
+  margin-left: auto; margin-right: auto;
+  align-items: center;
+  /* Shrinks CONTINUOUSLY with the window instead of stepping at one breakpoint. The old
+     `max-height: 200px` under a single @media query meant every window shorter than that
+     breakpoint got the same 200px portrait, so the card kept outgrowing the panel and the
+     stats fell off the bottom — at 760px tall the Armor row and the whole gem line were gone.
+     A vh term makes the portrait give up height in proportion to how little there is, and the
+     px term stops it ballooning on a tall monitor. Aspect-ratio does the rest: constrained by
+     height it narrows, so it never goes back to cropping the head off. */
+  max-height: min(200px, 19vh) !important;
+}
+.classPortraitCanvas { width: 100%; height: 100%; }
+
+/* THE GEM LINE. `height` (not min-height) with a 3-line clamp reserved 76px for content that
+   measured 89 — so "Starting Gem: quickshot" lost its second line halfway down the glyphs.
+   The row is bottom-pinned by margin-top:auto, so a MINIMUM keeps short names aligned across
+   cards exactly as before while long ones are allowed the line they need. The clamp goes with
+   it: it existed to enforce the fixed height, and there is nothing left to enforce. */
+.classCardSkill {
+  height: auto !important;
+  min-height: calc(2.6em + 8px);
+  -webkit-line-clamp: none !important;
+  overflow: visible !important;
+}
+
+/* ---- Class card stats: one horizontal row instead of three stacked ones ---------------------
+   The stat block was a 1-column grid — Life, Speed and Armor each on their own line — which
+   cost three lines of a card that was already losing its gem row off the bottom on a short
+   window. Three columns costs ONE line and buys back two.
+
+   It keeps the property the grid was built for: exactly one row, with fixed icon and value
+   columns inside each cell, so a three-digit Life can never reflow the block and shift the
+   "Starting Gem" divider the way the original flow-wrapped flex row did. Digit count still
+   cannot influence layout.
+
+   Type steps down because three cells share the width one used to have. The label sits under
+   the number rather than beside it: inline at this width the words collide, and dropping them
+   entirely would leave three bare numbers whose meaning is carried only by an emoji. */
+.classCardStats {
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 4px !important;
+  font-size: 0.82em;
+}
+.classCardStats .statRow {
+  /* Icon LEFT of its number, label beneath the pair. Two columns sized to content and centred
+     as a group, so the icon/number pair reads as one unit and the three cells stay balanced
+     whatever the digit count. The value column is still fixed-width so 98 and 220 occupy the
+     same slot and no card's block is a different height from its neighbour's. */
+  display: grid !important;
+  grid-template-columns: auto 2.1em !important;
+  grid-template-areas: 'icon value' 'label label';
+  justify-content: center; align-items: baseline;
+  column-gap: 3px; row-gap: 0;
+  line-height: 1.15;
+}
+.classCardStats .statIcon { grid-area: icon; }
+.classCardStats .statVal  { grid-area: value; }
+.classCardStats .statLbl  { grid-area: label; text-align: center; }
+.classCardStats .statIcon { font-size: 0.95em; opacity: 0.9; }
+.classCardStats .statVal { text-align: center !important; font-size: 1.05em; }
+.classCardStats .statLbl { font-size: 0.85em; letter-spacing: 0.02em; }
+
+/* The class carousel must not run under the Main Menu button. The viewport carries
+   `overflow: visible` so the cards' hover lift is not clipped — which also means a card taller
+   than the viewport SPILLS instead of scrolling, and it was spilling 47px straight over the
+   button. The two classes whose gem name wraps to a second line ("quickshot", "bonethrow") put
+   that line underneath it, so the name was drawn and then covered: present in the DOM, invisible
+   on screen, which is the worst way for a layout bug to present.
+
+   Reserving the button's own height under the carousel means the spill has somewhere to go. */
+.classViewport { padding-bottom: 56px; }
+
+/* The void's introduction card: the horde-rush treatment in the void's own colour, so the
+   event grammar stays consistent — a coloured full-screen card means the run just changed. */
+.stageCard.void .stageCardTitle {
+  background: linear-gradient(180deg, #cdb4ff 0%, #7a56d2 45%, #3b2a66 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(3px 3px 0 #000) drop-shadow(0 0 26px rgba(122,86,210,0.55));
+}
+.stageCard.void .stageCardSub { color: #b9a6e8; }
+
+/* ---- Relics & Items in the pause menu -------------------------------------------------------
+   Icon cells in a wrapping grid; the words wait in a tooltip until a cell is highlighted by
+   mouse, keyboard focus, or the controller's .gpFocused stamp. The cells are buttons so they
+   join the pad nav with no extra wiring. */
+.pauseRelicGrid { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 0 2px; }
+.relicCell {
+  width: 58px; height: 58px; font-size: 26px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(21, 21, 23, 0.85);
+  color: var(--relicColor, #7a56d2);
+  border: 1px solid #2a2a2e;
+  border-bottom: 3px solid var(--relicColor, #7a56d2);
+  border-radius: 2px; cursor: default; font-family: inherit;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--relicColor, #7a56d2) 55%, transparent);
+  transition: transform 0.1s, border-color 0.1s;
+}
+.relicCell:hover, .relicCell:focus, .relicCell.gpFocused {
+  border-color: var(--relicColor, #7a56d2);
+  transform: translateY(-2px);
+  outline: none;
+}
+.pauseCollectionEmpty {
+  font-family: 'Pixelify Sans', sans-serif; font-size: 16px; color: #8a8a92; padding: 4px 0;
+}
+/* The shared tooltip. Hangs off #pauseMenu so the scrolling overlayInner cannot clip it; the
+   name/pips/desc classes are the relic strip's old type, which is exactly the reading size the
+   HUD version was recently doubled to. */
+.pauseTooltip {
+  position: absolute; z-index: 30; pointer-events: none;
+  background: rgba(14, 11, 16, 0.97);
+  border: 1px solid var(--iron);
+  border-left: 4px solid var(--relicColor, #7a56d2);
+  padding: 10px 14px; max-width: 400px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.7);
+}
+.pauseTooltip .pauseTipDesc { white-space: normal; overflow: visible; text-overflow: clip; }

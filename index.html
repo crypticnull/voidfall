@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voidfall Survivors — A Roguelike Survival</title>
+  <!-- The loading screen's title. Preloaded from <head> so it queues ahead of the ~90 sprite
+       sheets, tiles and fonts the page goes on to request, instead of contending with them. -->
+  <link rel="preload" as="image" href="assets/ui/title-lockup.png" fetchpriority="high" />
+  <!-- The three floor tiles, for the same reason and measured the same way. They are tiny
+       (24KB the lot) but were fetched LAZILY — each one only when something first drew it — so
+       stage 3's arrived at 644ms, after the loading screen had already painted without it, and
+       stages 1 and 2 not until 2214ms, past DOMContentLoaded. The delay was never bandwidth,
+       it was when the request started, which is why an atlas would not have helped: one bigger
+       file requested just as late arrives just as late. Preloading starts all three during
+       HTML parse, alongside the modules.
+       stage3 is first: it is the loading screen's own backdrop and the main menu's floor. -->
+  <link rel="preload" as="image" href="assets/tiles/stage3_floor.png" fetchpriority="high" />
+  <link rel="preload" as="image" href="assets/tiles/stage1_floor.png" />
+  <link rel="preload" as="image" href="assets/tiles/stage2_floor.png" />
+  <link rel="stylesheet" href="assets/fonts/fonts.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="vignette"></div>
+  <div id="grain"></div>
+
+  <div id="hud" class="hidden">
+    <!-- Large XP bar spanning the top of the screen -->
+    <div class="xpTop">
+      <div id="xpFill" class="xpTopFill"></div>
+      <span id="levelText" class="xpTopLabel">Lv 1</span>
+    </div>
+    <!-- Lower-left: TEMPORARY perf readout, in the corner the vitals vacated. Tagged for
+         deletion in markup, CSS and JS together. -->
+    <div id="perfBox" class="perfBox">
+      <div class="perfRow"><span class="perfLabel">FPS</span><span id="perfFps" class="perfVal">—</span></div>
+      <div class="perfRow"><span class="perfLabel">ENEMIES</span><span id="perfEnemies" class="perfVal">—</span></div>
+      <div class="perfRow"><span class="perfLabel">PROJ</span><span id="perfProj" class="perfVal">—</span></div>
+      <div class="perfRow"><span class="perfLabel">FX</span><span id="perfFx" class="perfVal">—</span></div>
+    </div>
+    <!-- Upper-left: time, stage, kills -->
+    <!-- Kill count leads, clock sits under it. Source order IS the visual order here, so the
+         move is made in the markup rather than with a flex `order`, which would have left the
+         two disagreeing for anything reading the DOM (screen readers, controller nav). -->
+    <div class="hudCenter">
+      <div id="stageText" class="hudStage">Stage 1</div>
+      <div id="killsText" class="hudKills">☠ 0</div>
+      <div id="timerText" class="hudTime">0:00</div>
+    </div>
+    <!-- Upper-LEFT column: run totals, then the relic and item strips beneath them. They share
+         one column so the strips sit UNDER whatever is above them rather than being positioned
+         by hand. Absolutely positioning both meant the relic bar defaulted to the top of the
+         HUD and covered the XP bar; stacking them means the strip follows however tall the
+         thing above it happens to be. -->
+    <div id="hudTopLeft" class="hudTopLeft">
+      <div class="hudPanel hudRunTotals">
+      <div class="hudRunTotalsRow">
+        <div class="hudGoldRow"><span class="goldGlyph">◈</span> <span id="goldText">0</span></div>
+        <div id="keyCounter" class="hudKeyGroup" aria-label="Keys held">
+          <svg class="keyIcon" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="keyG" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#eef2f8"/><stop offset="0.5" stop-color="#c3c9d4"/><stop offset="1" stop-color="#878da0"/>
+              </linearGradient>
+            </defs>
+            <g fill="url(#keyG)" stroke="#4b5162" stroke-width="0.7" stroke-linejoin="round">
+              <circle cx="12" cy="6" r="4"/>
+              <rect x="10.8" y="9" width="2.4" height="11" rx="0.6"/>
+              <rect x="13.2" y="15" width="3.6" height="2.2" rx="0.5"/>
+              <rect x="13.2" y="18" width="2.6" height="2.2" rx="0.5"/>
+            </g>
+            <circle cx="12" cy="6" r="1.7" fill="#2a2e38"/>
+          </svg>
+          <span id="keyCountText">0</span>
+        </div>
+      </div>
+      <!-- Tomes held this run, under the gold counter. They belong beside the other run
+           totals rather than down with the skill gems: a tome is not a thing you watch on a
+           cooldown, it is a thing you have. -->
+      <div id="supportTray" class="tray traySmall hudTomeTray"></div>
+      </div>
+    </div>
+    <!-- Relics and items no longer live on the HUD: mid-fight nobody reads a strip of rules
+         text, and it was the tallest thing on the screen. They moved to the pause menu, where
+         reading is the whole activity — see the Relics & Items panel in #pauseMenu. -->
+    <!-- Upper-right: vitals. Armor over life, so the pair reads as one block.
+         Two bare bars, no panel and no captions: the colour says which is which and the
+         readout lives inside the track. #armorRow is the row itself, so a class with no
+         armour drops its bar entirely — and because it is the FIRST row, a class without it
+         leaves the life bar sitting where the armour bar was rather than shifting anything.
+         Source order IS the visual order here, so the swap is made in the markup rather than
+         with a flex `order`, which would leave the two disagreeing for anything reading the
+         DOM (screen readers, controller nav). -->
+    <div class="hudPanel hudVitals">
+      <div id="armorRow" class="vitalRow">
+        <div class="bar armorBar"><div id="armorFill" class="barFill"></div><span id="armorText" class="barText"></span></div>
+      </div>
+      <div class="vitalRow">
+        <div class="bar hpBar"><div id="hpLoss" class="barLoss"></div><div id="hpFill" class="barFill"></div><span id="hpText" class="barText"></span></div>
+      </div>
+    </div>
+    <div id="bossBar" class="bossBarWrap hidden">
+      <div id="bossBarLabel" class="bossBarLabel">Boss</div>
+      <div class="bar bossBarBg"><div id="bossFill" class="barFill bossFill"></div></div>
+    </div>
+    <div class="trayWrap">
+      <div id="skillTray" class="tray"></div>
+    </div>
+  </div>
+
+  <div id="gamepadStatus" class="gamepadStatus">🎮 No controller detected — press a button on it</div>
+  <div id="toastContainer"></div>
+  <!-- Global "now playing" flash. Lives outside #hud so it shows on menus too, and is
+       pointer-events:none so it can never swallow a click on whatever is underneath. -->
+  <div id="nowPlaying" class="nowPlaying">
+    <div class="npHeader">NOW PLAYING</div>
+    <div id="npTitle" class="npTitle"></div>
+  </div>
+  <div id="stageCard" class="stageCard hidden"><div id="stageCardTitle" class="stageCardTitle"></div><div id="stageCardSub" class="stageCardSub"></div></div>
+
+  <div id="confirmDialog" class="overlay hidden">
+    <div class="overlayInner confirmInner">
+      <h2 class="sectionTitle" id="confirmTitle">Are you sure?</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle" id="confirmMessage"></p>
+      <div class="pauseActions">
+        <button id="confirmYesBtn" class="primaryBtn">Yes</button>
+        <button id="confirmNoBtn" class="ghostBtn">No</button>
+      </div>
+      <p class="inputHint" id="confirmHint"></p>
+    </div>
+  </div>
+
+  <!-- Split into two panels with a gap between them, so the sprite carousel running behind the
+       menu stays visible the whole time instead of being hidden by one tall box. -->
+  <!-- Boot loading screen. Visible from the very first paint and torn down once every sprite
+       sheet, floor tile and font has settled, so nothing is ever seen popping in. Its own
+       element rather than an .overlay: it must not inherit the panel chrome, and it has to be
+       up before any script runs. -->
+  <div id="loadScreen">
+    <div id="loadBarTrack"><div id="loadBarFill"></div></div>
+    <div class="loadInner">
+      <!-- A plain <img>, not the canvas the menu uses. The parser sees this while it is still
+           reading the document, so the fetch starts before a single module has been evaluated
+           and the lockup is on screen at the first paint. Drawing it would mean waiting for
+           main.js and then for the webfonts, which is the whole reason the title is baked.
+           The gold bar at the top carries the progress; no counter text competes with it. -->
+      <img id="loadTitleImg" src="assets/ui/title-lockup.png" alt="Voidfall Survivors"
+           onerror="this.style.display='none'">
+    </div>
+  </div>
+
+  <div id="mainMenu" class="overlay hidden mainMenuSplit">
+    <div class="overlayInner mainMenuHead">
+      <div class="titleArt" role="img" aria-label="Voidfall Survivors">
+        <canvas id="titleCanvas" class="titleCanvas"></canvas>
+      </div>
+      <p class="gameSubtitle">Survive. Loot. Become unstoppable.</p>
+    </div>
+    <div class="overlayInner mainMenuBody">
+      <!-- Deaths on the left, gold on the right, both aligned to the button column below. -->
+      <div class="menuStatRow">
+        <div class="menuDeaths" aria-label="Total deaths">☠ <span id="menuDeaths">0</span></div>
+        <div class="goldBanner">◈ <span id="menuGold">0</span></div>
+      </div>
+      <div class="mainMenuActions">
+        <button id="playGameBtn" class="primaryBtn">Play Game</button>
+        <!-- Outlined flag, not the solid one Dev Tools carries: both are developer entrances, and two identical glyphs three rows apart read as a copy-paste slip. -->
+        <button id="sandboxBtn" class="ghostBtn">⚐ Sandbox Mode</button>
+        <button id="unlocksBtn" class="ghostBtn">Unlocks</button>
+        <button id="achievementsBtn" class="ghostBtn">Achievements</button>
+        <button id="shopBtn" class="ghostBtn">Upgrade Shop</button>
+        <button id="leaderboardBtn" class="ghostBtn">Leaderboard</button>
+        <button id="musicBtn" class="ghostBtn">♪ Music Player</button>
+        <button id="mainSettingsBtn" class="ghostBtn">Settings</button>
+        <button id="mainDevBtn" class="ghostBtn">⚑ Dev Tools</button>
+        <button id="quitBtn" class="ghostBtn">Quit</button>
+      </div>
+    </div>
+    <div id="buildTag" class="buildTag">Alpha 0.0.1</div>
+    <!-- Studio stamp, mirroring the version tag into the opposite corner. Shares the
+         .buildTag class so the two can never drift apart in font, colour or opacity;
+         .studioTag only moves it to the left. -->
+    <div class="buildTag studioTag">© Destructo Labs</div>
+  </div>
+
+  <div id="sandboxMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Sandbox</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Build a scenario. No waves, no boss — only what you place.</p>
+      <div id="sandboxBody" class="sandboxBody"></div>
+      <div class="pauseActions">
+        <button id="sandboxStartBtn" class="primaryBtn">Begin</button>
+        <button id="sandboxBackBtn" class="ghostBtn">← Back</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Music player. Promoted out of a Settings sub-row into a screen of its own, reachable
+       from both the main menu and the pause menu — it is something you reach for mid-session,
+       not a preference you set once and forget. -->
+  <div id="musicMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Music Player</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Pick a track. It plays until the stage changes it.</p>
+      <div id="musicBody" class="settingOptions settingOptionsList"></div>
+      <!-- Playback mode. Sits under the track list because it governs what happens AFTER the
+           track you picked, which is the order you think about it in. -->
+      <div id="musicModes" class="pauseActions"></div>
+      <!-- Transport. Below the mode row: those choose what plays next, these act on what is
+           playing right now. Chromeless on purpose — they are controls you press repeatedly,
+           and three more bordered plates under three existing ones would read as another row
+           of settings rather than a transport bar. -->
+      <div id="musicTransport"></div>
+      <button id="closeMusicBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="achievementsMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Achievements</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">What the dusk remembers of you.</p>
+      <div id="achievementsBody" class="unlocksBody"></div>
+      <button id="closeAchievementsBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="unlocksMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Unlocks</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Every skill gem and tome in the arsenal.</p>
+      <div id="unlocksBody" class="unlocksBody"></div>
+      <button id="closeUnlocksBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="leaderboardMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Leaderboard</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Your finest stands against the horde.</p>
+      <div id="leaderboardList" class="leaderboardList"></div>
+      <div class="pauseActions">
+        <button id="closeLeaderboardBtn" class="ghostBtn">← Back</button>
+        <button id="clearLeaderboardBtn" class="ghostBtn">Clear Records</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="shopMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Upgrade Shop</h2>
+      <div class="titleFlourish"></div>
+      <div class="shopGold">◈ <span id="shopGold">0</span> Gold</div>
+      <div id="shopList" class="shopList"></div>
+      <button id="closeShopBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="classSelect" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Choose Your Class</h2>
+      <div class="titleFlourish"></div>
+      <p id="classSelectHint" class="inputHint"></p>
+      <div class="classCarousel">
+        <button id="classPrevBtn" class="carouselArrow hidden" aria-label="Previous">‹</button>
+        <div class="classViewport"><div id="classList" class="classList"></div></div>
+        <button id="classNextBtn" class="carouselArrow hidden" aria-label="Next">›</button>
+      </div>
+      <button id="backToMenuBtn" class="ghostBtn">← Main Menu</button>
+    </div>
+  </div>
+
+  <div id="levelUp" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Level Up</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Choose a gem or boon</p>
+      <div id="cardList" class="cardList"></div>
+      <button id="rerollBtn" class="ghostBtn rerollBtn hidden">↻ Reroll</button>
+    </div>
+  </div>
+
+  <div id="pauseMenu" class="overlay hidden">
+    <div id="pauseTooltip" class="pauseTooltip hidden"></div>
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Paused</h2>
+      <div class="titleFlourish"></div>
+      <p id="pauseHint" class="inputHint"></p>
+      <div class="pauseActions">
+        <button id="resumeBtn" class="primaryBtn">Resume</button>
+        <button id="pauseSettingsBtn" class="ghostBtn">⚙ Settings</button>
+        <button id="pauseMusicBtn" class="ghostBtn">♪ Music Player</button>
+        <button id="pauseSandboxBtn" class="ghostBtn hidden">⚑ Sandbox Setup</button>
+        <button id="pauseDevBtn" class="ghostBtn">⚑ Dev Tools</button>
+        <button id="pauseQuitMenuBtn" class="ghostBtn">Quit to Menu</button>
+        <button id="pauseQuitGameBtn" class="ghostBtn">Quit Game</button>
+      </div>
+      <p id="pauseControls" class="pauseControls"></p>
+      <!-- One floating tooltip serves every cell. It hangs off #pauseMenu (which never
+           scrolls) rather than .overlayInner (which does), so it cannot be clipped by the
+           scroller, and it shares the overlay's zoom so its coordinates stay in one space. -->
+      <div class="statPanels">
+        <div class="statPanel">
+          <div class="statPanelTitle">Relics &amp; Items</div>
+          <!-- Cells are BUTTONS so the controller nav picks them up with zero extra wiring:
+             visibleFocusables collects buttons, so each cell joins the pause grid and takes
+             .gpFocused on highlight exactly like the menu's real buttons. -->
+          <div id="pauseRelicGrid" class="pauseRelicGrid"></div>
+        </div>
+        <div class="statPanel">
+          <div class="statPanelTitle">Your Modifiers</div>
+          <div id="playerStats" class="statGrid"></div>
+        </div>
+        <div class="statPanel">
+          <div class="statPanelTitle">Skill Modifiers <span class="statPanelNote">approx. single-target DPS</span></div>
+          <div id="skillStats" class="statGrid"></div>
+        </div>
+        <div class="statPanel">
+          <div class="statPanelTitle">Enemy Modifiers</div>
+          <div id="enemyStats" class="statGrid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="devMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Dev Tools</h2>
+      <!-- One scrolling body for the whole panel. Cheats, skills and entity stats used to be
+           three siblings, and each of them matched the "designated body" rule in style.css —
+           so the panel's height was split three ways and every section became its own short
+           crop box. They scroll together now; see .devBody. -->
+      <div id="devBody" class="devBody">
+        <div id="devCheats" class="settingsList"></div>
+        <div id="devTuning" class="devTuning"></div>
+        <div id="devEntityTuning" class="devTuning"></div>
+      </div>
+      <div class="pauseActions">
+        <button id="closeDevBtn" class="ghostBtn">← Back</button>
+        <button id="devResetAllBtn" class="ghostBtn">Reset All Stats</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Settings</h2>
+      <div class="titleFlourish"></div>
+      <div class="settingsList">
+        <div class="settingRow">
+          <div class="settingLabel">Control Prompts</div>
+          <div class="settingLabelDesc">How on-screen hints are displayed.</div>
+          <div id="inputModeOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Active Controller</div>
+          <div class="settingLabelDesc">Pin a specific gamepad if the wrong device gets picked up.</div>
+          <div id="controllerOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Music Volume</div>
+          <div class="settingLabelDesc">Main menu and stage themes.</div>
+          <div class="volumeControl gpSlider">
+            <input type="range" id="musicVolumeRange" class="volumeSlider" min="0" max="100" step="1" />
+            <span id="musicVolumeValue" class="volumeValue">60%</span>
+          </div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">SFX Volume</div>
+          <div class="settingLabelDesc">Combat, pickup, and menu sounds.</div>
+          <div class="volumeControl gpSlider">
+            <input type="range" id="sfxVolumeRange" class="volumeSlider" min="0" max="100" step="1" />
+            <span id="sfxVolumeValue" class="volumeValue">100%</span>
+          </div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Graphics</div>
+          <div class="settingLabelDesc">Display mode. Borderless fills the whole screen.</div>
+          <div id="displayModeOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Resolution</div>
+          <div class="settingLabelDesc">Renders below native and upscales. Lower is faster and blockier; the view never changes.</div>
+          <div id="renderScaleOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Performance Readout</div>
+          <div class="settingLabelDesc">Frame rate, live enemies, projectiles and effects, in the lower-left corner.</div>
+          <div id="perfPanelOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Developer Tools</div>
+          <div class="settingLabelDesc">Shows the Dev Tools entry on the main and pause menus.</div>
+          <div id="devToolsOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">UI Scale</div>
+          <div class="settingLabelDesc">Size of the HUD, menus and popups. Independent of Resolution.</div>
+          <div id="uiScaleOptions" class="settingOptions"></div>
+        </div>
+      </div>
+      <button id="closeSettingsBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="endScreen" class="overlay hidden">
+    <div class="overlayInner">
+      <h1 id="endTitle" class="gameTitle">Victory</h1>
+      <div class="titleFlourish"></div>
+      <p id="endSubtitle" class="gameSubtitle"></p>
+      <div id="endStats" class="endStats"></div>
+      <div id="endKillingBlow" class="endKillingBlow hidden"></div>
+      <div class="pauseActions">
+        <button id="endRestartBtn" class="primaryBtn">Play Again</button>
+        <button id="endMenuBtn" class="ghostBtn">Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

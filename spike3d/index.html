@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Voidfall 3D Spike</title>
+  <!-- Reuses the game's own pixel face so the HUD reads as the same product. -->
+  <link rel="stylesheet" href="../assets/fonts/fonts.css" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #0a080e; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+  </style>
+</head>
+<body>
+  <canvas id="spike"></canvas>
+  <!-- THE POINT OF THIS PAGE: spike.js imports the real, unmodified src/skills.js and drives
+       it against a hand-rolled 3D world. No file under src/ knows this page exists. -->
+  <script type="module" src="./spike.js"></script>
+</body>
+</html>

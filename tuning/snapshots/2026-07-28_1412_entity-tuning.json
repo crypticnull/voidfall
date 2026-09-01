@@ -1,0 +1,16 @@
+{
+  "curve": {
+    "hp": {
+      "beyond": 1.585
+    }
+  },
+  "gold": {
+    "gold": {
+      "chanceNormal": 15,
+      "chanceHorde": 65,
+      "bossHoard": 5,
+      "bossCoin": 7
+    }
+  },
+  "drops": {}
+}

@@ -1,0 +1,52 @@
+{
+  "name": "voidfall-survivors",
+  "version": "0.7.0",
+  "private": true,
+  "description": "Voidfall Survivors — a dark-fantasy arena survival roguelike",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:portable": "npm run sync-version && npm run bake && electron-builder --win portable",
+    "typecheck": "tsc -p jsconfig.json",
+    "smoke": "node tools/smoke.mjs",
+    "smoke:boot": "node tools/smoke.mjs --boot",
+    "check": "npm run sync-version && npm run typecheck && npm run smoke",
+    "bake": "python tools/bake-tuning.py --if-present",
+    "dev": "python tools/dev-server.py 8791",
+    "sync-version": "node tools/sync-version.mjs",
+    "wipe-saves": "python tools/wipe-player-data.py"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.0"
+  },
+  "build": {
+    "appId": "com.voidfallsurvivors.game",
+    "productName": "Voidfall Survivors",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "style.css",
+      "src/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "!assets/music/**/_ARCHIVE/**",
+      "!_reference/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "Voidfall_Alpha_${version}.exe"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

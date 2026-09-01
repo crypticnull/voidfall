@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Duskfall Survivors — A Roguelike Survival</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="vignette"></div>
+  <div id="grain"></div>
+
+  <div id="hud" class="hidden">
+    <!-- Large XP bar spanning the top of the screen -->
+    <div class="xpTop">
+      <div id="xpFill" class="xpTopFill"></div>
+      <span id="levelText" class="xpTopLabel">Lv 1</span>
+    </div>
+    <!-- Upper-left: health panel -->
+    <div class="hudPanel hudTopLeft">
+      <div class="bar hpBar"><div id="hpFill" class="barFill"></div></div>
+      <div class="hudPanelTitle">Life <span id="hpText" class="hudPanelVal"></span></div>
+    </div>
+    <!-- Upper-center: time, stage, kills -->
+    <div class="hudCenter">
+      <div id="timerText" class="hudTime">0:00</div>
+      <div id="stageText" class="hudStage">Stage 1</div>
+      <div id="killsText" class="hudKills">☠ 0</div>
+    </div>
+    <!-- Upper-right cluster: TEMPORARY perf readout, then keys + gold -->
+    <div class="hudTopCluster">
+      <div id="perfBox" class="perfBox">
+        <div class="perfRow"><span class="perfLabel">FPS</span><span id="perfFps" class="perfVal">—</span></div>
+        <div class="perfRow"><span class="perfLabel">ENEMIES</span><span id="perfEnemies" class="perfVal">—</span></div>
+        <div class="perfRow"><span class="perfLabel">PROJ</span><span id="perfProj" class="perfVal">—</span></div>
+        <div class="perfRow"><span class="perfLabel">FX</span><span id="perfFx" class="perfVal">—</span></div>
+      </div>
+      <div class="hudPanel hudTopRight">
+      <div class="hudTopRightRow">
+        <div id="keyCounter" class="hudKeyGroup" aria-label="Keys held">
+          <svg class="keyIcon" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="keyG" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#eef2f8"/><stop offset="0.5" stop-color="#c3c9d4"/><stop offset="1" stop-color="#878da0"/>
+              </linearGradient>
+            </defs>
+            <g fill="url(#keyG)" stroke="#4b5162" stroke-width="0.7" stroke-linejoin="round">
+              <circle cx="12" cy="6" r="4"/>
+              <rect x="10.8" y="9" width="2.4" height="11" rx="0.6"/>
+              <rect x="13.2" y="15" width="3.6" height="2.2" rx="0.5"/>
+              <rect x="13.2" y="18" width="2.6" height="2.2" rx="0.5"/>
+            </g>
+            <circle cx="12" cy="6" r="1.7" fill="#2a2e38"/>
+          </svg>
+          <span id="keyCountText">0</span>
+        </div>
+        <div class="hudGoldRow"><span class="goldGlyph">◈</span> <span id="goldText">0</span></div>
+      </div>
+        <div class="hudGoldLabel">Gold</div>
+      </div>
+    </div>
+    <div id="bossBar" class="bossBarWrap hidden">
+      <div id="bossBarLabel" class="bossBarLabel">Boss</div>
+      <div class="bar bossBarBg"><div id="bossFill" class="barFill bossFill"></div></div>
+    </div>
+    <div class="trayWrap">
+      <div id="skillTray" class="tray"></div>
+      <div id="supportTray" class="tray traySmall"></div>
+    </div>
+  </div>
+
+  <div id="gamepadStatus" class="gamepadStatus">🎮 No controller detected — press a button on it</div>
+  <div id="toastContainer"></div>
+  <!-- Global "now playing" flash. Lives outside #hud so it shows on menus too, and is
+       pointer-events:none so it can never swallow a click on whatever is underneath. -->
+  <div id="nowPlaying" class="nowPlaying">
+    <div class="npHeader">NOW PLAYING</div>
+    <div id="npTitle" class="npTitle"></div>
+  </div>
+  <div id="stageCard" class="stageCard hidden"><div id="stageCardTitle" class="stageCardTitle"></div><div id="stageCardSub" class="stageCardSub"></div></div>
+
+  <div id="confirmDialog" class="overlay hidden">
+    <div class="overlayInner confirmInner">
+      <h2 class="sectionTitle" id="confirmTitle">Are you sure?</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle" id="confirmMessage"></p>
+      <div class="pauseActions">
+        <button id="confirmYesBtn" class="primaryBtn">Yes</button>
+        <button id="confirmNoBtn" class="ghostBtn">No</button>
+      </div>
+      <p class="inputHint" id="confirmHint"></p>
+    </div>
+  </div>
+
+  <div id="mainMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <div class="titleArt" role="img" aria-label="Duskfall Survivors">
+        <canvas id="titleCanvas" class="titleCanvas"></canvas>
+      </div>
+      <p class="gameSubtitle">Survive. Loot. Become unstoppable.</p>
+      <div class="goldBanner">◈ <span id="menuGold">0</span> Gold</div>
+      <div class="mainMenuActions">
+        <button id="playGameBtn" class="primaryBtn">Play Game</button>
+        <button id="sandboxBtn" class="ghostBtn">Sandbox Mode</button>
+        <button id="unlocksBtn" class="ghostBtn">Unlocks</button>
+        <button id="shopBtn" class="ghostBtn">Upgrade Shop</button>
+        <button id="leaderboardBtn" class="ghostBtn">Leaderboard</button>
+        <button id="mainSettingsBtn" class="ghostBtn">Settings</button>
+        <button id="mainDevBtn" class="ghostBtn">⚑ Dev Tools</button>
+        <button id="quitBtn" class="ghostBtn">Quit</button>
+      </div>
+    </div>
+    <div id="buildTag" class="buildTag">Alpha 0.0.1</div>
+  </div>
+
+  <div id="sandboxMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Sandbox</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Build a scenario. No waves, no boss — only what you place.</p>
+      <div id="sandboxBody" class="sandboxBody"></div>
+      <div class="pauseActions">
+        <button id="sandboxStartBtn" class="primaryBtn">Begin</button>
+        <button id="sandboxBackBtn" class="ghostBtn">← Back</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="unlocksMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Unlocks</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Every skill gem and tome in the arsenal.</p>
+      <div id="unlocksBody" class="unlocksBody"></div>
+      <button id="closeUnlocksBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="leaderboardMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Leaderboard</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Your finest stands against the horde.</p>
+      <div id="leaderboardList" class="leaderboardList"></div>
+      <div class="pauseActions">
+        <button id="closeLeaderboardBtn" class="ghostBtn">← Back</button>
+        <button id="clearLeaderboardBtn" class="ghostBtn">Clear Records</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="shopMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Upgrade Shop</h2>
+      <div class="titleFlourish"></div>
+      <div class="shopGold">◈ <span id="shopGold">0</span> Gold</div>
+      <div id="shopList" class="shopList"></div>
+      <button id="closeShopBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="classSelect" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Choose Your Class</h2>
+      <div class="titleFlourish"></div>
+      <p id="classSelectHint" class="inputHint"></p>
+      <div class="classCarousel">
+        <button id="classPrevBtn" class="carouselArrow hidden" aria-label="Previous">‹</button>
+        <div class="classViewport"><div id="classList" class="classList"></div></div>
+        <button id="classNextBtn" class="carouselArrow hidden" aria-label="Next">›</button>
+      </div>
+      <button id="backToMenuBtn" class="ghostBtn">← Main Menu</button>
+    </div>
+  </div>
+
+  <div id="levelUp" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Level Up</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Choose a gem or boon</p>
+      <div id="cardList" class="cardList"></div>
+      <button id="rerollBtn" class="ghostBtn rerollBtn hidden">↻ Reroll</button>
+    </div>
+  </div>
+
+  <div id="pauseMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Paused</h2>
+      <div class="titleFlourish"></div>
+      <p id="pauseHint" class="inputHint"></p>
+      <div class="pauseActions">
+        <button id="resumeBtn" class="primaryBtn">Resume</button>
+        <button id="pauseSettingsBtn" class="ghostBtn">⚙ Settings</button>
+        <button id="pauseSandboxBtn" class="ghostBtn hidden">⚑ Sandbox Setup</button>
+        <button id="pauseDevBtn" class="ghostBtn">⚑ Dev Tools</button>
+        <button id="pauseQuitMenuBtn" class="ghostBtn">Quit to Menu</button>
+        <button id="pauseQuitGameBtn" class="ghostBtn">Quit Game</button>
+      </div>
+      <p id="pauseControls" class="pauseControls"></p>
+      <div class="statPanels">
+        <div class="statPanel">
+          <div class="statPanelTitle">Your Modifiers</div>
+          <div id="playerStats" class="statGrid"></div>
+        </div>
+        <div class="statPanel">
+          <div class="statPanelTitle">Skill Modifiers <span class="statPanelNote">approx. single-target DPS</span></div>
+          <div id="skillStats" class="statGrid"></div>
+        </div>
+        <div class="statPanel">
+          <div class="statPanelTitle">Enemy Modifiers</div>
+          <div id="enemyStats" class="statGrid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="devMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Dev Tools</h2>
+      <div class="titleFlourish"></div>
+      <p class="gameSubtitle">Cheats and live skill tuning.</p>
+      <div id="devCheats" class="settingsList"></div>
+      <div id="devTuning" class="devTuning"></div>
+      <div class="pauseActions">
+        <button id="closeDevBtn" class="ghostBtn">← Back</button>
+        <button id="devResetAllBtn" class="ghostBtn">Reset All Stats</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsMenu" class="overlay hidden">
+    <div class="overlayInner">
+      <h2 class="sectionTitle">Settings</h2>
+      <div class="titleFlourish"></div>
+      <div class="settingsList">
+        <div class="settingRow">
+          <div class="settingLabel">Control Prompts</div>
+          <div class="settingLabelDesc">How on-screen hints are displayed.</div>
+          <div id="inputModeOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Active Controller</div>
+          <div class="settingLabelDesc">Pin a specific gamepad if the wrong device gets picked up.</div>
+          <div id="controllerOptions" class="settingOptions"></div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Music Volume</div>
+          <div class="settingLabelDesc">Main menu and stage themes.</div>
+          <div class="volumeControl gpSlider">
+            <input type="range" id="musicVolumeRange" class="volumeSlider" min="0" max="100" step="1" />
+            <span id="musicVolumeValue" class="volumeValue">60%</span>
+          </div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">SFX Volume</div>
+          <div class="settingLabelDesc">Combat, pickup, and menu sounds.</div>
+          <div class="volumeControl gpSlider">
+            <input type="range" id="sfxVolumeRange" class="volumeSlider" min="0" max="100" step="1" />
+            <span id="sfxVolumeValue" class="volumeValue">100%</span>
+          </div>
+        </div>
+        <div class="settingRow">
+          <div class="settingLabel">Graphics</div>
+          <div class="settingLabelDesc">Display mode. Borderless fills the whole screen.</div>
+          <div id="displayModeOptions" class="settingOptions"></div>
+        </div>
+        <div id="musicPlayerRow" class="settingRow hidden">
+          <div class="settingLabel">Music Player</div>
+          <div class="settingLabelDesc">Play any track on demand — crossfades the current one out.</div>
+          <div id="musicPlayerOptions" class="settingOptions settingOptionsList"></div>
+        </div>
+      </div>
+      <button id="closeSettingsBtn" class="ghostBtn">← Back</button>
+    </div>
+  </div>
+
+  <div id="endScreen" class="overlay hidden">
+    <div class="overlayInner">
+      <h1 id="endTitle" class="gameTitle">Victory</h1>
+      <div class="titleFlourish"></div>
+      <p id="endSubtitle" class="gameSubtitle"></p>
+      <div id="endStats" class="endStats"></div>
+      <div class="pauseActions">
+        <button id="endRestartBtn" class="primaryBtn">Play Again</button>
+        <button id="endMenuBtn" class="ghostBtn">Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

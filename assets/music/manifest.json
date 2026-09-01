@@ -1,0 +1,91 @@
+{
+  "mainMenu": [
+    {
+      "src": "assets/music/main-title/Dead Head.ogg",
+      "name": "Dead Head"
+    }
+  ],
+  "shop": [
+    {
+      "src": "assets/music/shop/Byte Shop.ogg",
+      "name": "Byte Shop"
+    }
+  ],
+  "stage1": [
+    {
+      "src": "assets/music/stage-1/Bones in the Static.ogg",
+      "name": "Bones in the Static"
+    },
+    {
+      "src": "assets/music/stage-1/Crypt Byte Overture.ogg",
+      "name": "Crypt Byte Overture"
+    },
+    {
+      "src": "assets/music/stage-1/Neon Graveyard Funk.ogg",
+      "name": "Neon Graveyard Funk"
+    },
+    {
+      "src": "assets/music/stage-1/Turning in the Grave.ogg",
+      "name": "Turning in the Grave"
+    }
+  ],
+  "stage2": [
+    {
+      "src": "assets/music/stage-2/Anubis' Hate.ogg",
+      "name": "Anubis' Hate"
+    },
+    {
+      "src": "assets/music/stage-2/Heatwave.ogg",
+      "name": "Heatwave"
+    },
+    {
+      "src": "assets/music/stage-2/Karnak Bitcrush.ogg",
+      "name": "Karnak Bitcrush"
+    },
+    {
+      "src": "assets/music/stage-2/Pharoah Funk.ogg",
+      "name": "Pharoah Funk"
+    },
+    {
+      "src": "assets/music/stage-2/Sand Stylin.ogg",
+      "name": "Sand Stylin"
+    },
+    {
+      "src": "assets/music/stage-2/Sun Dance.ogg",
+      "name": "Sun Dance"
+    }
+  ],
+  "stage3": [
+    {
+      "src": "assets/music/stage-3/Crypt.ogg",
+      "name": "Crypt"
+    },
+    {
+      "src": "assets/music/stage-3/Panic.ogg",
+      "name": "Panic"
+    },
+    {
+      "src": "assets/music/stage-3/Raving Souls.ogg",
+      "name": "Raving Souls"
+    },
+    {
+      "src": "assets/music/stage-3/Riff of the Dead.ogg",
+      "name": "Riff of the Dead"
+    },
+    {
+      "src": "assets/music/stage-3/The Underneath.ogg",
+      "name": "The Underneath"
+    },
+    {
+      "src": "assets/music/stage-3/Thrash and Wail.ogg",
+      "name": "Thrash and Wail"
+    }
+  ],
+  "stage4": [],
+  "stage5": [],
+  "stage6": [],
+  "stage7": [],
+  "stage8": [],
+  "stage9": [],
+  "stage10": []
+}

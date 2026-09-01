@@ -1,0 +1,149 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Renderer bench — Canvas 2D vs WebGL</title>
+<style>
+  body { margin: 0; background: #14121c; color: #e8e4f0; font: 13px/1.5 monospace; }
+  #out { padding: 12px; white-space: pre; }
+  canvas { display: block; border-top: 1px solid #333; }
+</style>
+<div id="out">warming up…</div>
+<canvas id="c2d" width="960" height="540"></canvas>
+<canvas id="cgl" width="960" height="540"></canvas>
+<script type="module">
+// Measures the two renderers on the SAME workload: N sprites, real game art, real sizes,
+// drawn every frame. Both paths get their geometry from spriteQuad(), so any difference in
+// the numbers is renderer cost and nothing else.
+//
+// Reports median frame time rather than FPS: FPS is capped by vsync at ~120, so once a path is
+// comfortably fast the FPS number stops changing and hides the remaining headroom. Frame time
+// keeps resolving.
+import { spriteQuad, handDrawnSpriteIds } from './src/sprites.js';
+import { SpriteBatch } from './src/gl/sprite-batch.js';
+
+const out = document.getElementById('out');
+const c2d = document.getElementById('c2d');
+const cgl = document.getElementById('cgl');
+const ctx = c2d.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const batch = new SpriteBatch(cgl);
+
+const log = (s) => { out.textContent += '\n' + s; };
+
+// Give the hand-drawn PNGs time to decode, otherwise the bench measures procedural fallbacks.
+// Poll rather than guess a fixed delay — and refuse to run on an empty cast, because a bench
+// that draws nothing reports a very impressive 0.00ms for both renderers.
+let ids = [];
+for (let i = 0; i < 40; i++) {
+  ids = handDrawnSpriteIds();
+  if (ids.length >= 8) break;
+  await new Promise((r) => setTimeout(r, 100));
+}
+if (!ids.length) {
+  out.textContent = 'ABORT: no hand-drawn sprites loaded — asset paths are not resolving from '
+    + location.pathname + '. The bench must be served from the project root.';
+  throw new Error('no sprites');
+}
+out.textContent = `sprites: ${ids.length} (${ids.join(', ')})`;
+
+// A fixed, deterministic scatter so both renderers draw exactly the same thing.
+function makeScene(n) {
+  const items = [];
+  let seed = 12345;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < n; i++) {
+    items.push({
+      id: ids[i % ids.length],
+      x: rnd() * 960, y: rnd() * 540,
+      h: 64, flip: rnd() > 0.5,
+    });
+  }
+  // Sorting by sprite is what the WebGL path wants (one draw call per texture). The 2D path is
+  // indifferent to order, so this costs it nothing — it is not a thumb on the scale.
+  items.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  return items;
+}
+
+function frame2d(items) {
+  ctx.clearRect(0, 0, 960, 540);
+  for (const it of items) {
+    const q = spriteQuad(it.id, it.h, it.flip, 'side', 0, false);
+    if (!q) continue;
+    ctx.save();
+    if (q.flip) {
+      ctx.translate(it.x, it.y); ctx.scale(-1, 1);
+      ctx.drawImage(q.canvas, -q.w / 2, -q.h / 2, q.w, q.h);
+    } else {
+      ctx.drawImage(q.canvas, it.x - q.w / 2, it.y - q.h / 2, q.w, q.h);
+    }
+    ctx.restore();
+  }
+}
+
+function frameGl(items) {
+  batch.begin();
+  for (const it of items) {
+    const q = spriteQuad(it.id, it.h, it.flip, 'side', 0, false);
+    if (!q) continue;
+    batch.draw(q.canvas, it.x, it.y, q.w, q.h, q.flip, 1);
+  }
+  batch.end();
+}
+
+// Runs the frame function for a fixed number of frames and returns the median CPU time spent
+// inside it. rAF-paced so the GPU actually presents, matching real conditions.
+async function measure(fn, items, frames = 90) {
+  for (let i = 0; i < 15; i++) { fn(items); await new Promise(requestAnimationFrame); } // warm
+  const times = [];
+  for (let i = 0; i < frames; i++) {
+    const t0 = performance.now();
+    fn(items);
+    times.push(performance.now() - t0);
+    await new Promise(requestAnimationFrame);
+  }
+  times.sort((a, b) => a - b);
+  return { med: times[times.length >> 1], p95: times[Math.floor(times.length * 0.95)] };
+}
+
+const COUNTS = [200, 500, 1000, 2000, 4000];
+log('\n  count |   Canvas2D ms |     WebGL ms |  speedup | gl draw calls');
+log('  ------+---------------+--------------+----------+--------------');
+const results = [];
+for (const n of COUNTS) {
+  const items = makeScene(n);
+  const a = await measure(frame2d, items);
+  const b = await measure(frameGl, items);
+  const row = { n, c2d: a.med, gl: b.med, c2dP95: a.p95, glP95: b.p95, draws: batch.stats.draws };
+  results.push(row);
+  log(`  ${String(n).padStart(5)} | ${a.med.toFixed(2).padStart(9)} (p95 ${a.p95.toFixed(1)}) | ${b.med.toFixed(2).padStart(8)} (p95 ${b.p95.toFixed(1)}) | ${(a.med / b.med).toFixed(2)}x | ${row.draws}`);
+}
+window.__benchResults = results;
+
+// ---------- where does the frame budget ACTUALLY go? ----------
+// main.js draws 77 arcs and 19 radial gradients per frame's worth of effect code. A radial
+// gradient is regenerated and rasterised per fill, which is a different order of cost from a
+// blit — so before porting sprites to WebGL it is worth knowing whether sprites were ever the
+// expensive half. Counts below match real effect volumes (beam embers alone cap at 16x19=304).
+function frameGlows(n) {
+  ctx.clearRect(0, 0, 960, 540);
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < n; i++) {
+    const x = (i * 137) % 960, y = (i * 241) % 540, r = 24 + (i % 5) * 8;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,190,90,0.9)');
+    g.addColorStop(1, 'rgba(255,120,20,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+log('\n  radial-gradient glows (Canvas 2D, the effect layer):');
+const glowRows = [];
+for (const n of [50, 150, 300, 600]) {
+  const g = await measure(() => frameGlows(n), null);
+  glowRows.push({ n, ms: g.med, p95: g.p95 });
+  log(`  ${String(n).padStart(5)} glows | ${g.med.toFixed(2).padStart(6)} ms (p95 ${g.p95.toFixed(1)})`);
+}
+window.__glowResults = glowRows;
+log('\ndone');
+</script>
