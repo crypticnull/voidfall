@@ -1,0 +1,49 @@
+Copyright (c) 2026 crypticnull. All rights reserved.
+
+VOIDFALL SURVIVORS — PROPRIETARY LICENCE
+
+This software and its accompanying assets (the "Work") are the exclusive
+property of the copyright holder. The Work is made available for viewing and
+evaluation only.
+
+You MAY NOT, without prior express written permission from the copyright
+holder:
+
+  1. Copy, reproduce, publish, distribute or sublicense the Work or any part
+     of it, in source or compiled form.
+  2. Modify the Work or create derivative works from it.
+  3. Use the Work, or any part of it, in a commercial product or service.
+  4. Use the artwork, music, sprites, textures, character designs or written
+     content for any purpose, including as training data for machine learning
+     models.
+  5. Remove or alter this notice.
+
+No licence, right or interest in any trademark, trade name or service mark of
+the copyright holder is granted by this notice.
+
+THIRD-PARTY COMPONENTS
+
+The Work bundles third-party components that are NOT covered by this notice
+and which remain governed by their own licences. These include, without
+limitation:
+
+  - Fonts under assets/fonts/ (Cinzel, Pirata One, Pixelify Sans,
+    Press Start 2P), distributed under the SIL Open Font License.
+  - Electron and the npm dependencies declared in package.json, each under
+    its own licence.
+
+Nothing in this notice extends, restricts or otherwise modifies the terms of
+those third-party licences. Where this notice conflicts with a third-party
+licence in respect of that third party's component, the third-party licence
+governs.
+
+NO WARRANTY
+
+THE WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE WORK OR THE USE OR OTHER DEALINGS IN THE WORK.
+
+For permissions and enquiries: https://github.com/crypticnull

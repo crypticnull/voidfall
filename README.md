@@ -134,4 +134,16 @@ Not a direction the project is taking. Just a measurement.
 
 ---
 
+## Licence
+
+**Proprietary — all rights reserved.** See [LICENSE](LICENSE). The Work is viewable here for
+evaluation; copying, modification, redistribution and commercial use all require written
+permission, as does use of the art, music or written content as machine-learning training data.
+
+Bundled third-party components keep their own licences — notably the fonts under
+`assets/fonts/` (Cinzel, Pirata One, Pixelify Sans, Press Start 2P), which are distributed
+under the SIL Open Font License, and the npm dependencies declared in `package.json`.
+
+---
+
 *Alpha software. Everything here is subject to change, including the parts that look settled.*
