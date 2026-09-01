@@ -32,6 +32,11 @@ limitation:
   - Electron and the npm dependencies declared in package.json, each under
     its own licence.
 
+The music under assets/music/ was generated using Suno AI under a paid
+subscription and is used under the terms of that subscription. The rights the
+copyright holder asserts over it are those conferred by that agreement and no
+more.
+
 Nothing in this notice extends, restricts or otherwise modifies the terms of
 those third-party licences. Where this notice conflicts with a third-party
 licence in respect of that third party's component, the third-party licence

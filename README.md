@@ -142,7 +142,8 @@ permission, as does use of the art, music or written content as machine-learning
 
 Bundled third-party components keep their own licences — notably the fonts under
 `assets/fonts/` (Cinzel, Pirata One, Pixelify Sans, Press Start 2P), which are distributed
-under the SIL Open Font License, and the npm dependencies declared in `package.json`.
+under the SIL Open Font License, and the npm dependencies declared in `package.json`. The
+music was generated with Suno AI under a paid subscription and is used under those terms.
 
 ---
 
